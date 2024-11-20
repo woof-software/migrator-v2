@@ -1,13 +1,31 @@
 # vscode
 .vscode
 
-# hardhat
-artifacts
+# Hardhat files.
 cache
+artifacts
 deployments
+
+# Dependency directory.
 node_modules
+
+# Artifacts that TypeChain creates.
+typechain
+typechain-types
+
+# Logs.
+logs
+*.log
+
+# `solidity-coverage`.
 coverage
 coverage.json
+
+# yarn.
+.yarn/*
+.yarn-integrity
+yarn-debug.log*
+yarn-error.log*
 
 # don't push the environment vars!
 .env
@@ -42,6 +60,7 @@ local.properties
 proguard/
 
 # Log Files
+logs
 *.log
 
 # Android Studio Navigation editor temp files
@@ -97,6 +116,7 @@ lint/outputs/
 lint/tmp/
 # lint/reports/
 
+# The output file of `hardhat-gas-reporter`.
 gas-report.txt
 
 contracts/test/fuzzing/crytic-export
