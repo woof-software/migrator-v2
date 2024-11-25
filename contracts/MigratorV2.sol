@@ -43,9 +43,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
     mapping(address => FlashData) private _flashData;
 
     /**
-     * @dev Mapping to track whether an address is a valid adapter.
+     * @dev Mapping to track whether an address is a registered protocol adapter.
      */
-    mapping(address => bool) public isAdapter;
+    mapping(address => bool) public allowedAdapters;
 
     /// --------Errors-------- ///
 
@@ -86,6 +86,23 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      */
     error ERC20TransferFailure();
 
+    /**
+     * @dev Reverts if the length of the provided arrays do not match.
+     */
+    error MismatchedArrayLengths();
+
+    /**
+     * @dev Reverts if the adapter is already allowed.
+     * @param adapter Address of the adapter that is already allowed.
+     */
+    error AdapterAlreadyAllowed(address adapter);
+
+    /**
+     * @dev Reverts if the Comet contract is already configured.
+     * @param comet Address of the Comet contract that is already configured.
+     */
+    error CometAlreadyConfigured(address comet);
+
     /// --------Events-------- ///
 
     /**
@@ -110,7 +127,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @dev Reverts with {InvalidAdapter} if the adapter is not allowed.
      */
     modifier validAdapter(address adapter) {
-        if (!isAdapter[adapter]) revert InvalidAdapter();
+        if (!allowedAdapters[adapter]) revert InvalidAdapter();
         _;
     }
 
@@ -130,8 +147,14 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @param adapters Array of protocol adapter addresses to register.
      * @param comets Array of Comet contract addresses to support.
      * @param flashData Array of flash loan configurations corresponding to each Comet contract.
-     * @dev Sets the contract owner to the multisig address, initializes adapters, and sets up flash data for each Comet.
-     * @dev Reverts with {InvalidZeroAddress} if any address in the inputs is zero.
+     * @dev This constructor:
+     *  - Sets the contract owner to the `multisig` address.
+     *  - Registers protocol adapters provided in the `adapters` array.
+     *  - Configures flash loan data for each corresponding Comet contract using the `flashData` array.
+     *  - Pauses the contract if any of the input arrays are empty.
+     * @dev Reverts with:
+     *  - {InvalidZeroAddress} if any address within the inputs is zero.
+     *  - {MismatchedArrayLengths} if the length of `comets` and `flashData` arrays do not match.
      */
     constructor(
         address multisig,
@@ -139,15 +162,19 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         address[] memory comets,
         FlashData[] memory flashData
     ) Ownable(multisig) ReentrancyGuard() Pausable() {
+        // Ensure `comets` and `flashData` arrays have matching lengths
+        if (comets.length != flashData.length) revert MismatchedArrayLengths();
+
+        // Register each adapter
         for (uint256 i = 0; i < adapters.length; i++) {
             _setAdapter(adapters[i]);
         }
 
+        // Configure flash loan data for each corresponding Comet
         for (uint256 i = 0; i < flashData.length; i++) {
             _setFlashData(comets[i], flashData[i]);
         }
     }
-
     /// --------Functions-------- ///
 
     /**
@@ -262,6 +289,18 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
     function unpause() public onlyOwner {
         _unpause();
     }
+
+    /// --------View Functions-------- ///
+
+    /**
+     * @notice Retrieves the list of registered protocol adapters.
+     * @return Array of all registered protocol adapter addresses.
+     */
+
+    function getAdapters() external view returns (address[] memory) {
+        return _adapters;
+    }
+
     /// --------Private Functions-------- ///
 
     /**
@@ -327,7 +366,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      */
     function _setAdapter(address adapter) private {
         if (adapter == address(0)) revert InvalidZeroAddress();
-        isAdapter[adapter] = true;
+        if (allowedAdapters[adapter]) revert AdapterAlreadyAllowed(adapter);
+
+        allowedAdapters[adapter] = true;
         _adapters.push(adapter);
     }
 
@@ -337,7 +378,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @dev Reverts if the adapter is not currently allowed.
      */
     function _removeAdapter(address adapter) private validAdapter(adapter) {
-        isAdapter[adapter] = false;
+        allowedAdapters[adapter] = false;
         for (uint256 i = 0; i < _adapters.length; i++) {
             if (_adapters[i] == adapter) {
                 _adapters[i] = _adapters[_adapters.length - 1];
@@ -354,8 +395,14 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @dev Reverts with {InvalidZeroAddress} if any address in the `flashData` is zero.
      */
     function _setFlashData(address comet, FlashData memory flashData) private {
-        if (flashData.liquidityPool == address(0) || flashData.baseToken == address(0))
+        if (flashData.liquidityPool == address(0) || flashData.baseToken == address(0)) {
             revert InvalidZeroAddress();
+        }
+
+        if (_flashData[comet].liquidityPool != address(0)) {
+            revert CometAlreadyConfigured(comet);
+        }
+
         _flashData[comet] = FlashData(
             flashData.liquidityPool,
             flashData.baseToken,
