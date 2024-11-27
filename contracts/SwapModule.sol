@@ -38,13 +38,6 @@ abstract contract SwapModule is ReentrancyGuard {
     error SwapFailed();
 
     /**
-     * @dev Reverts if slippage tolerance is exceeded.
-     * @param receivedAmount The amount of tokens received from the swap.
-     * @param minAmount The minimum amount expected based on slippage settings.
-     */
-    error SlippageExceeded(uint256 receivedAmount, uint256 minAmount);
-
-    /**
      * @dev Reverts if an invalid slippage basis points value is provided.
      * @param slippageBps The provided slippage BPS value.
      */
@@ -59,16 +52,6 @@ abstract contract SwapModule is ReentrancyGuard {
      * @dev Reverts if the output token amount is zero.
      */
     error ZeroAmountOut();
-
-    /**
-     * @dev Reverts if the maximum allowable input token amount is zero.
-     */
-    error ZeroAmountInMaximum();
-
-    /**
-     * @dev Reverts if the minimum required output token amount is zero.
-     */
-    error ZeroAmountOutMinimum();
 
     /**
      * @dev Reverts if the swap path provided is empty.
@@ -94,29 +77,17 @@ abstract contract SwapModule is ReentrancyGuard {
      * @param params Struct containing swap parameters for exact output.
      * @return amountIn The amount of input tokens spent.
      * @dev Reverts with {ZeroAmountOut} if the output token amount is zero.
-     * @dev Reverts with {ZeroAmountInMaximum} if the maximum allowable input token amount is zero.
      * @dev Reverts with {EmptySwapPath} if the swap path provided is empty.
-     * @dev Reverts with {SlippageExceeded} if the slippage tolerance is exceeded.
      * @dev Reverts with {SwapFailed} if the swap operation fails.
      */
     function _swapFlashloanToBorrowToken(
         ISwapRouter.ExactOutputParams memory params
     ) internal nonReentrant returns (uint256 amountIn) {
         if (params.amountOut == 0) revert ZeroAmountOut();
-        if (params.amountInMaximum == 0) revert ZeroAmountInMaximum();
         if (params.path.length == 0) revert EmptySwapPath();
 
         // Perform the swap
-        try UNISWAP_ROUTER.exactOutput(params) returns (uint256 inputAmount) {
-            amountIn = inputAmount;
-
-            // Check slippage tolerance
-            if (inputAmount > params.amountInMaximum) {
-                revert SlippageExceeded(inputAmount, params.amountInMaximum);
-            }
-        } catch {
-            revert SwapFailed();
-        }
+        amountIn = UNISWAP_ROUTER.exactOutput(params);
     }
 
     /**
@@ -124,29 +95,17 @@ abstract contract SwapModule is ReentrancyGuard {
      * @param params Struct containing swap parameters for exact input.
      * @return amountOut The amount of output tokens received.
      * @dev Reverts with {ZeroAmountIn} if the input token amount is zero.
-     * @dev Reverts with {ZeroAmountOutMinimum} if the minimum required output token amount is zero.
      * @dev Reverts with {EmptySwapPath} if the swap path provided is empty.
-     * @dev Reverts with {SlippageExceeded} if the slippage tolerance is exceeded.
      * @dev Reverts with {SwapFailed} if the swap operation fails.
      */
     function _swapCollateralToCompoundToken(
         ISwapRouter.ExactInputParams memory params
     ) internal nonReentrant returns (uint256 amountOut) {
         if (params.amountIn == 0) revert ZeroAmountIn();
-        if (params.amountOutMinimum == 0) revert ZeroAmountOutMinimum();
         if (params.path.length == 0) revert EmptySwapPath();
 
         // Perform the swap
-        try UNISWAP_ROUTER.exactInput(params) returns (uint256 outputAmount) {
-            amountOut = outputAmount;
-
-            // Check slippage tolerance
-            if (outputAmount < params.amountOutMinimum) {
-                revert SlippageExceeded(outputAmount, params.amountOutMinimum);
-            }
-        } catch {
-            revert SwapFailed();
-        }
+        amountOut = UNISWAP_ROUTER.exactInput(params);
     }
 
     /**
