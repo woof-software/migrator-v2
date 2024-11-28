@@ -2,12 +2,12 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {BaseAdapter} from "./BaseAdapter.sol";
 import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
 import {IAaveLendingPool} from "./interfaces/IAaveLendingPool.sol";
 import {IComet} from "./interfaces/IComet.sol";
-import {IDaiUsds} from "./interfaces/IDaiUsds.sol";
 
-contract AaveV3Adapter is IProtocolAdapter {
+contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
     /// --------Custom Types-------- ///
 
     struct AaveV3Position {
@@ -34,29 +34,9 @@ contract AaveV3Adapter is IProtocolAdapter {
      */
     IAaveLendingPool public immutable LENDING_POOL;
 
-    /**
-     * @notice Converter contract for DAI to USDS.
-     */
-    IDaiUsds public immutable DAI_USDS_CONVERTER;
-
-    /**
-     * @notice Address of the DAI token.
-     */
-    address public immutable DAI;
-
-    /**
-     * @notice Address of the USDS token.
-     */
-    address public immutable USDS;
-
     /// --------Errors-------- ///
 
     error AaveV3Error(uint256 loc, uint256 code);
-
-    /**
-     * @dev Reverts if the DAI to USDS conversion fails.
-     */
-    error ConversionFailed(uint256 expectedAmount, uint256 actualAmount);
 
     /// --------Constructor-------- ///
 
@@ -67,11 +47,16 @@ contract AaveV3Adapter is IProtocolAdapter {
      * @param _dai Address of the DAI token.
      * @param _usds Address of the USDS token.
      */
-    constructor(address _aaveLendingPool, address _daiUsdsConverter, address _dai, address _usds) {
+    constructor(
+        address _uniswapRouter,
+        address _daiUsdsConverter,
+        address _dai,
+        address _usds,
+        address _wrappedNativeToken,
+        address _aaveLendingPool
+    ) BaseAdapter(_uniswapRouter, _daiUsdsConverter, _dai, _usds, _wrappedNativeToken) {
+        if (_aaveLendingPool == address(0)) revert InvalidZeroAddress();
         LENDING_POOL = IAaveLendingPool(_aaveLendingPool);
-        DAI_USDS_CONVERTER = IDaiUsds(_daiUsdsConverter);
-        DAI = _dai;
-        USDS = _usds;
     }
 
     /// --------Functions-------- ///
@@ -110,21 +95,5 @@ contract AaveV3Adapter is IProtocolAdapter {
             IERC20(collateral.token).approve(collateral.comet, collateralAmount);
             IComet(collateral.comet).supplyTo(user, collateral.token, collateralAmount);
         }
-    }
-
-    /**
-     * @notice Converts DAI to USDS using the DaiUsds converter contract.
-     * @param daiAmount Amount of DAI to be converted.
-     * @return usdsAmount Amount of USDS received after conversion.
-     * @dev Reverts with {ConversionFailed} if the amount of USDS received is not equal to the expected amount.
-     */
-    function _convertDaiToUsds(uint256 daiAmount) internal returns (uint256 usdsAmount) {
-        IERC20(DAI).approve(address(DAI_USDS_CONVERTER), daiAmount);
-
-        DAI_USDS_CONVERTER.daiToUsds(address(this), daiAmount);
-
-        usdsAmount = IERC20(USDS).balanceOf(address(this));
-
-        if (daiAmount != usdsAmount) revert ConversionFailed(daiAmount, usdsAmount);
     }
 }
