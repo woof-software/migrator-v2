@@ -126,8 +126,9 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         // If a swap is required to obtain the repayment tokens
         if (swap.path.length > 0) {
             address tokenIn = _decodeTokenIn(swap.path);
-
-            if (tokenIn == BaseAdapter.USDS) {
+            address tokenOut = _decodeTokenOut(swap.path);
+            // If the swap is from USDS to DAI, convert USDS to DAI
+            if (tokenIn == BaseAdapter.USDS && tokenOut == BaseAdapter.DAI) {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(repayAmount);
             } else {
