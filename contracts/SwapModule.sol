@@ -14,8 +14,10 @@ abstract contract SwapModule is ReentrancyGuard {
     /// --------Structs-------- ///
     
     struct Swap {
-        bytes path;
+        bytes pathOfSwapFlashloan;
         uint256 amountInMaximum;
+        bytes pathSwapCollateral;
+        uint256 amountOutMinimum;
     }
 
     /// --------Constants-------- ///
