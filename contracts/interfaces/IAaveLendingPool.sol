@@ -31,11 +31,7 @@ interface IAaveLendingPool {
      * different wallet
      * @return The final amount withdrawn
      */
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external returns (uint256);
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 
     /**
      * @dev Allows borrowers to repay their borrowings on a specific reserve, burning the equivalent debt tokens owned.
@@ -76,4 +72,27 @@ interface IAaveLendingPool {
         uint16 referralCode,
         address onBehalfOf
     ) external;
+
+    /**
+     * @dev Returns the following user reserve data
+     * @param asset The address of the underlying asset of the reserve
+     * @param user The address of the user
+     */
+    function getUserReserveData(
+        address asset,
+        address user
+    )
+        external
+        view
+        returns (
+            uint256 currentATokenBalance,
+            uint256 currentStableDebt,
+            uint256 currentVariableDebt,
+            uint256 principalStableDebt,
+            uint256 scaledVariableDebt,
+            uint256 stableBorrowRate,
+            uint256 liquidityRate,
+            uint40 stableRateLastUpdated,
+            bool usageAsCollateralEnabled
+        );
 }

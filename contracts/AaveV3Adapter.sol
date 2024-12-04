@@ -9,6 +9,7 @@ import {IComet} from "./interfaces/IComet.sol";
 import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {IADebtToken} from "./interfaces/aave/IADebtToken.sol";
 import {IAToken} from "./interfaces/aave/IAToken.sol";
+import {IWrappedToken} from "./interfaces/IWrappedToken.sol";
 
 /// @title AaveV3Adapter
 /// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
@@ -57,6 +58,13 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
      */
     IAaveLendingPool public immutable LENDING_POOL;
 
+    /// --------Errors-------- ///
+
+    /**
+     * @dev Reverts if the debt for a specific token has not been successfully cleared
+     */
+    error DebtNotCleared(address aToken);
+
     /// --------Constructor-------- ///
 
     /**
@@ -104,7 +112,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
 
         // Migrate each collateral position
         for (uint256 i = 0; i < position.collateral.length; i++) {
-            migrateCollateral(user, comet, position.collateral[i]);
+            migrateCollateral(user, comet, position.collateral[i], position.swaps[i]);
         }
     }
 
@@ -116,17 +124,15 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
      * @param swap Swap parameters to obtain the repayment tokens, if needed
      */
     function repayBorrow(address user, AaveV3Borrow memory borrow, Swap memory swap) internal {
-        uint256 repayAmount = borrow.amount;
-
-        // Determine the amount to repay; if max value, repay the full debt balance
-        if (borrow.amount == type(uint256).max) {
-            repayAmount = IERC20(borrow.aDebtToken).balanceOf(user);
-        }
+        // Determine the amount to repay. If max value, repay the full debt balance
+        uint256 repayAmount = borrow.amount == type(uint256).max
+            ? IERC20(borrow.aDebtToken).balanceOf(user)
+            : borrow.amount;
 
         // If a swap is required to obtain the repayment tokens
-        if (swap.path.length > 0) {
-            address tokenIn = _decodeTokenIn(swap.path);
-            address tokenOut = _decodeTokenOut(swap.path);
+        if (swap.pathOfSwapFlashloan.length > 0) {
+            address tokenIn = _decodeTokenIn(swap.pathOfSwapFlashloan);
+            address tokenOut = _decodeTokenOut(swap.pathOfSwapFlashloan);
             // If the swap is from USDS to DAI, convert USDS to DAI
             if (tokenIn == BaseAdapter.USDS && tokenOut == BaseAdapter.DAI) {
                 // Convert USDS to DAI for repayment
@@ -135,7 +141,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
                     ISwapRouter.ExactOutputParams({
-                        path: swap.path,
+                        path: swap.pathOfSwapFlashloan,
                         recipient: address(this),
                         amountOut: repayAmount,
                         amountInMaximum: swap.amountInMaximum,
@@ -155,24 +161,80 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
     }
 
+    /**
+     * @notice Migrates a user's collateral position from Aave V3 to Compound III
+     * @dev May perform a swap to obtain the migration tokens
+     * @param user Address of the user whose collateral is being migrated
+     * @param comet Address of the Compound III (Comet) contract
+     * @param collateral The collateral position details
+     * @param swap Swap parameters to obtain the migration tokens, if needed
+     */
     function migrateCollateral(
         address user,
         address comet,
-        AaveV3Collateral memory collateral
+        AaveV3Collateral memory collateral,
+        Swap memory swap
     ) internal {
-        uint256 collateralAmount = collateral.amount;
-
-        LENDING_POOL.withdraw(collateral.aToken, collateralAmount, address(this));
-
-        if (collateral.aToken == DAI) {
-            uint256 convertedAmount = _convertDaiToUsds(collateralAmount);
-
-            IERC20(USDS).approve(comet, convertedAmount);
-
-            IComet(comet).supplyTo(user, USDS, convertedAmount);
+        // Check if the debt for the collateral token has been successfully cleared
+        if (_isDebtCleared(user, collateral.aToken)) revert DebtNotCleared(collateral.aToken);
+        // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
+        uint256 aTokenAmount = collateral.amount == type(uint256).max
+            ? IAToken(collateral.aToken).balanceOf(user)
+            : collateral.amount;
+        // Transfer the collateral tokens from the user to this contract
+        IAToken(collateral.aToken).transferFrom(user, address(this), aTokenAmount);
+        // Get the underlying asset address of the collateral token
+        address underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
+        // Withdraw the collateral from Aave V3
+        LENDING_POOL.withdraw(underlyingAsset, aTokenAmount, address(this));
+        // If a swap is required to obtain the migration tokens
+        if (swap.pathSwapCollateral.length > 0) {
+            address tokenIn = _decodeTokenIn(swap.pathSwapCollateral);
+            address tokenOut = _decodeTokenOut(swap.pathSwapCollateral);
+            // If the swap is from DAI to USDS, convert DAI to USDS
+            if (tokenIn == BaseAdapter.DAI && tokenOut == BaseAdapter.USDS) {
+                _convertDaiToUsds(aTokenAmount);
+                IERC20(BaseAdapter.USDS).approve(comet, aTokenAmount);
+                IComet(comet).supplyTo(user, BaseAdapter.USDS, aTokenAmount);
+                return;
+            } else {
+                uint256 amountOut = _swapCollateralToCompoundToken(
+                    ISwapRouter.ExactInputParams({
+                        path: swap.pathSwapCollateral,
+                        recipient: address(this),
+                        amountIn: aTokenAmount,
+                        amountOutMinimum: swap.amountOutMinimum,
+                        deadline: block.timestamp
+                    })
+                );
+                IERC20(tokenOut).approve(comet, amountOut);
+                IComet(comet).supplyTo(user, tokenOut, amountOut);
+                return;
+            }
+            // If the collateral token is the native token, wrap the native token and supply it to Comet
+        } else if (underlyingAsset == BaseAdapter.NATIVE_TOKEN) {
+            uint256 wrappedAmount = _wrapNativeToken(aTokenAmount);
+            BaseAdapter.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
+            IComet(comet).supplyTo(user, address(BaseAdapter.WRAPPED_NATIVE_TOKEN), wrappedAmount);
+            return;
+            // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(collateral.aToken).approve(comet, collateralAmount);
-            IComet(comet).supplyTo(user, collateral.aToken, collateralAmount);
+            IERC20(underlyingAsset).approve(comet, aTokenAmount);
+            IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
         }
+    }
+
+    /**
+     * @notice Checks if the debt for a specific token has been successfully closed.
+     * @param user Address of the user.
+     * @param asset Address of the token for which the debt needs to be verified.
+     * @return isCleared Boolean indicating whether the debt is cleared.
+     */
+    function _isDebtCleared(address user, address asset) internal view returns (bool isCleared) {
+        // Get the user's current debt balance for the specified asset
+        (, uint256 currentStableDebt, uint256 currentVariableDebt, , , , , , ) = LENDING_POOL
+            .getUserReserveData(asset, user);
+        // Debt is cleared if the total debt balance is zero
+        return (currentStableDebt + currentVariableDebt) == 0;
     }
 }
