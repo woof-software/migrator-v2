@@ -11,6 +11,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  * @dev Designed as an abstract contract for adapters to inherit.
  */
 abstract contract SwapModule is ReentrancyGuard {
+    /// --------Structs-------- ///
+    
+    struct Swap {
+        bytes path;
+        uint256 amountInMaximum;
+    }
+
     /// --------Constants-------- ///
 
     /**

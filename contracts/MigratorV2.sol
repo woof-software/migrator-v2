@@ -333,7 +333,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
 
         uint256 flashAmountWithFee = flashAmount + (flashData.isToken0 ? fee0 : fee1);
 
-        IProtocolAdapter(adapter).executeMigration(user, migrationData);
+        IProtocolAdapter(adapter).executeMigration(user, comet, migrationData);
 
         uint256 balance = IERC20NonStandard(flashData.baseToken).balanceOf(address(this));
 
