@@ -11,6 +11,7 @@ import {IADebtToken} from "./interfaces/aave/IADebtToken.sol";
 import {IAToken} from "./interfaces/aave/IAToken.sol";
 import {IWrappedToken} from "./interfaces/IWrappedToken.sol";
 
+
 /// @title AaveV3Adapter
 /// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
 contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
@@ -150,7 +151,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
                 );
             }
         }
-
+        
         // Get the underlying asset address of the debt token
         address underlyingAsset = IADebtToken(borrow.aDebtToken).UNDERLYING_ASSET_ADDRESS();
 
@@ -221,6 +222,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         } else {
             IERC20(underlyingAsset).approve(comet, aTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
+
         }
     }
 
