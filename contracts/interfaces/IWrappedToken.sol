@@ -25,4 +25,12 @@ interface IWrappedToken {
      * @return balance The balance of wrapped tokens.
      */
     function balanceOf(address account) external view returns (uint256 balance);
+
+    /**
+     * @notice Approves a spender to spend a specific amount of wrapped tokens on behalf of the owner.
+     * @param spender The address of the account allowed to spend the wrapped tokens.
+     * @param value The amount of wrapped tokens allowed to be spent.
+     * @return success True if the approval was successful, revert otherwise.
+     */
+    function approve(address spender, uint256 value) external returns (bool);
 }
