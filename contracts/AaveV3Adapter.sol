@@ -9,7 +9,6 @@ import {IComet} from "./interfaces/IComet.sol";
 import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {IADebtToken} from "./interfaces/aave/IADebtToken.sol";
 import {IAToken} from "./interfaces/aave/IAToken.sol";
-import {IWrappedToken} from "./interfaces/IWrappedToken.sol";
 
 
 /// @title AaveV3Adapter
@@ -139,6 +138,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(repayAmount);
             } else {
+                bytes memory data = swap.pathOfSwapFlashloan;
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
                     ISwapRouter.ExactOutputParams({
@@ -177,7 +177,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         Swap memory swap
     ) internal {
         // Check if the debt for the collateral token has been successfully cleared
-        if (_isDebtCleared(user, collateral.aToken)) revert DebtNotCleared(collateral.aToken);
+        if (!_isDebtCleared(user, collateral.aToken)) revert DebtNotCleared(collateral.aToken);
         // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
         uint256 aTokenAmount = collateral.amount == type(uint256).max
             ? IAToken(collateral.aToken).balanceOf(user)
