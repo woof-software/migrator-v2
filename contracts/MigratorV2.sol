@@ -175,7 +175,13 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
             _setFlashData(comets[i], flashData[i]);
         }
     }
+
     /// --------Functions-------- ///
+
+    /**
+     * @notice Allows the contract to receive the native token.
+     */
+    receive() external payable {}
 
     /**
      * @notice Initiates the migration process using a flash loan from Uniswap V3.
@@ -193,7 +199,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         address comet,
         bytes calldata migrationData,
         uint256 flashAmount
-    ) external nonReentrant validAdapter(adapter) validComet(comet) {
+    ) external validAdapter(adapter) validComet(comet) {
         if (flashAmount == 0) revert InvalidFlashAmount();
         if (migrationData.length == 0) revert InvalidMigrationData();
 
@@ -205,10 +211,10 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
             flashAmount
         );
 
-        FlashData memory flashData = _flashData[address(this)];
+        FlashData memory flashData = _flashData[comet];
 
         IUniswapV3Pool(flashData.liquidityPool).flash(
-            adapter,
+            address(this),
             flashData.isToken0 ? flashAmount : 0,
             flashData.isToken0 ? 0 : flashAmount,
             callbackData
@@ -327,13 +333,30 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
             uint256 flashAmount
         ) = abi.decode(data, (address, address, address, bytes, uint256));
 
-        FlashData memory flashData = _flashData[address(this)];
+        FlashData memory flashData = _flashData[comet];
 
         if (msg.sender != flashData.liquidityPool) revert SenderNotUniswapPool(msg.sender);
 
         uint256 flashAmountWithFee = flashAmount + (flashData.isToken0 ? fee0 : fee1);
 
-        IProtocolAdapter(adapter).executeMigration(user, comet, migrationData);
+        (bool success, bytes memory result) = adapter.delegatecall(
+            abi.encodeWithSelector(
+                IProtocolAdapter.executeMigration.selector,
+                user,
+                comet,
+                migrationData
+            )
+        );
+
+        if (!success) {
+            if (result.length > 0) {
+                assembly {
+                    revert(add(32, result), mload(result))
+                }
+            } else {
+                revert("Delegatecall failed");
+            }
+        }
 
         uint256 balance = IERC20NonStandard(flashData.baseToken).balanceOf(address(this));
 

@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SwapModule} from "./SwapModule.sol";
 import {IDaiUsds} from "./interfaces/IDaiUsds.sol";
-import {IWrappedToken} from "./interfaces/IWrappedToken.sol";
+import {IWETH9} from "./interfaces/IWETH9.sol";
 
 abstract contract BaseAdapter is SwapModule {
     /// --------Constants-------- ///
@@ -14,7 +14,7 @@ abstract contract BaseAdapter is SwapModule {
     /**
      * @notice Address of the wrapped native token (e.g., WETH).
      */
-    IWrappedToken public immutable WRAPPED_NATIVE_TOKEN;
+    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
 
     /**
      * @notice Converter contract for DAI to USDS.
@@ -72,7 +72,7 @@ abstract contract BaseAdapter is SwapModule {
         DAI_USDS_CONVERTER = IDaiUsds(_daiUsdsConverter);
         DAI = _dai;
         USDS = _usds;
-        WRAPPED_NATIVE_TOKEN = IWrappedToken(_wrappedNativeToken);
+        WRAPPED_NATIVE_TOKEN = IWETH9(_wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -156,10 +156,10 @@ abstract contract BaseAdapter is SwapModule {
         if (wrappedAmount != nativeAmount) revert UnwrappingFailed(wrappedAmount, nativeAmount);
     }
 
-    /// --------Fallback Function-------- ///
+    // /// --------Fallback Function-------- ///
 
-    /**
-     * @notice Allows the contract to receive the native token.
-     */
-    receive() external payable {}
+    // /**
+    //  * @notice Allows the contract to receive the native token.
+    //  */
+    // receive() external payable {}
 }

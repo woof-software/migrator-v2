@@ -12,10 +12,12 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  */
 abstract contract SwapModule is ReentrancyGuard {
     /// --------Structs-------- ///
-    
+
     struct Swap {
-        bytes path;
+        bytes pathOfSwapFlashloan;
         uint256 amountInMaximum;
+        bytes pathSwapCollateral;
+        uint256 amountOutMinimum;
     }
 
     /// --------Constants-------- ///
@@ -165,7 +167,7 @@ abstract contract SwapModule is ReentrancyGuard {
             // Load the length of the path
             let pathLength := mload(path)
             // Extract the last 20 bytes as tokenOut address
-            tokenOut := mload(add(path, add(20, pathLength)))
+            tokenOut := mload(add(path, pathLength))
         }
     }
 }
