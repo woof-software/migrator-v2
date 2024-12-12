@@ -23,12 +23,7 @@ contract MockUniswapV3Pool {
      * @param amount1 The amount of token1 to flash.
      * @param data Arbitrary data that will be passed to the flash callback.
      */
-    function flash(
-        address recipient,
-        uint256 amount0,
-        uint256 amount1,
-        bytes calldata data
-    ) external {
+    function flash(address recipient, uint256 amount0, uint256 amount1, bytes calldata data) external {
         // Transfer token0 and/or token1 to the recipient
         if (amount0 > 0) {
             IERC20(token0).transfer(recipient, amount0);
@@ -54,4 +49,9 @@ contract MockUniswapV3Pool {
             require(bal1 >= amount1 + fee1, "Flash loan not repaid token1");
         }
     }
+
+    /**
+     * @notice Allows the contract to receive the native token.
+     */
+    receive() external payable {}
 }

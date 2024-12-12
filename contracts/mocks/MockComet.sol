@@ -31,4 +31,9 @@ contract MockComet {
     function collateralBalanceOf(address user, address collateral) public view returns (uint256) {
         return IERC20(collateral).balanceOf(user);
     }
+
+    /**
+     * @notice Allows the contract to receive the native token.
+     */
+    receive() external payable {}
 }

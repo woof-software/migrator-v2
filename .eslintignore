@@ -1,5 +1,12 @@
 node_modules
-package-lock.json
+
+.*
+*.json
+*.yaml
+*.yml
+
+contracts
+*.sol
 
 abi
 docs
@@ -13,5 +20,3 @@ coverage*
 gas-report.txt
 
 .husky/_/
-
-LICENSE

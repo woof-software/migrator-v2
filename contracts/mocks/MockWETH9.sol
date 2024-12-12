@@ -19,7 +19,9 @@ interface IWETH9 {
  *      Depositing native tokens mints new wrapped tokens, and burning wrapped tokens withdraws native tokens.
  */
 contract MockWETH9 is ERC20, IWETH9 {
-    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {
+        _mint(msg.sender, 100_000 ether);
+    }
 
     /**
      * @notice Deposits native tokens (e.g. ETH) and mints wrapped tokens to the caller.

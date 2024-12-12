@@ -17,10 +17,7 @@ contract MockAaveLendingPool {
     IERC20 public aDebtToken;
 
     constructor(address _aToken, address _aDebtToken) {
-        require(
-            _aToken != address(0) || _aDebtToken != address(0),
-            "Invalid underlying asset address"
-        );
+        require(_aToken != address(0) || _aDebtToken != address(0), "Invalid underlying asset address");
         aToken = IERC20(_aToken);
         aDebtToken = IERC20(_aDebtToken);
     }
@@ -43,7 +40,12 @@ contract MockAaveLendingPool {
 
     function borrow(address asset, uint256 amount) external {
         IERC20Mintable(address(aDebtToken)).mint(msg.sender, amount);
-        IERC20(asset).transfer(msg.sender, amount);
+        if (asset == NATIVE_TOKEN_ADDRESS) {
+            (bool success, ) = msg.sender.call{value: amount}("");
+            require(success, "Transfer failed.");
+        } else {
+            IERC20(asset).transfer(msg.sender, amount);
+        }
     }
 
     function repay(
@@ -76,4 +78,9 @@ contract MockAaveLendingPool {
     {
         return (aToken.balanceOf(user), aDebtToken.balanceOf(user), 0, 0, 0, 0, 0, 0, true);
     }
+
+    /**
+     * @notice Allows the contract to receive the native token.
+     */
+    receive() external payable {}
 }

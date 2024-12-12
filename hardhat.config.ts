@@ -97,8 +97,8 @@ const config: HardhatUserConfig = {
         hardhat: {
             allowUnlimitedContractSize: !ENABLED_OPTIMIZER,
             accounts: {
-                // Default value: "10000000000000000000000" (10000 ETH).
-                accountsBalance: process.env.ACCOUNT_BALANCE || "10000000000000000000000",
+                // Default value: "10000000000000000000000" (100_000 ETH).
+                accountsBalance: process.env.ACCOUNT_BALANCE || "100000000000000000000000",
                 // Default value: 20.
                 count: process.env.NUMBER_OF_ACCOUNTS ? +process.env.NUMBER_OF_ACCOUNTS : 20
             },

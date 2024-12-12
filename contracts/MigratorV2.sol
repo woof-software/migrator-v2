@@ -109,15 +109,43 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @notice Emitted when an adapter executes a migration.
      * @param adapter Address of the protocol adapter used for migration.
      * @param user Address of the user initiating the migration.
+     * @param comet Address of the Comet contract associated with the migration.
      * @param flashAmount Amount borrowed in the flash loan.
-     * @param flashAmountWithFee Total amount repaid to the Uniswap pool (borrowed amount + fee).
+     * @param flashFee Fee paid for the flash loan.
      */
-    event AdapterExecuted(
+    event MigrationExecuted(
         address indexed adapter,
         address indexed user,
+        address indexed comet,
         uint256 flashAmount,
-        uint256 flashAmountWithFee
+        uint256 flashFee
     );
+
+    /**
+     * @notice Emitted when a protocol adapter is registered.
+     * @param adapter Address of the protocol adapter that was registered.
+     */
+    event AdapterAllowed(address indexed adapter);
+
+    /**
+     * @notice Emitted when a protocol adapter is removed.
+     * @param adapter Address of the protocol adapter that was removed.
+     */
+    event AdapterRemoved(address indexed adapter);
+
+    /**
+     * @notice Emitted when flash loan data is configured for a Comet contract.
+     * @param comet Address of the Comet contract.
+     * @param liquidityPool Address of the Uniswap V3 pool used for the flash loan.
+     * @param baseToken Address of the token involved in the flash loan.
+     */
+    event FlashDataConfigured(address indexed comet, address indexed liquidityPool, address indexed baseToken);
+
+    /**
+     * @notice Emitted when flash loan data is removed for a Comet contract.
+     * @param comet Address of the Comet contract.
+     */
+    event FlashDataRemoved(address indexed comet);
 
     /// --------Modifiers-------- ///
 
@@ -144,9 +172,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
     /**
      * @notice Initializes the contract with the provided parameters.
      * @param multisig Address of the multisig wallet for contract ownership.
-     * @param adapters Array of protocol adapter addresses to register.
-     * @param comets Array of Comet contract addresses to support.
-     * @param flashData Array of flash loan configurations corresponding to each Comet contract.
+     * @param adapters (Optional) Array of protocol adapter addresses to register.
+     * @param comets (Optional) Array of Comet contract addresses to support.
+     * @param flashData (Optional) Array of flash loan configurations corresponding to each Comet contract.
      * @dev This constructor:
      *  - Sets the contract owner to the `multisig` address.
      *  - Registers protocol adapters provided in the `adapters` array.
@@ -203,13 +231,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         if (flashAmount == 0) revert InvalidFlashAmount();
         if (migrationData.length == 0) revert InvalidMigrationData();
 
-        bytes memory callbackData = abi.encode(
-            msg.sender,
-            adapter,
-            comet,
-            migrationData,
-            flashAmount
-        );
+        bytes memory callbackData = abi.encode(msg.sender, adapter, comet, migrationData, flashAmount);
 
         FlashData memory flashData = _flashData[comet];
 
@@ -229,11 +251,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @dev Validates the caller and decodes the callback data.
      * @dev Invokes the adapter to execute the migration logic and ensures the flash loan is repaid.
      */
-    function uniswapV3FlashCallback(
-        uint256 fee0,
-        uint256 fee1,
-        bytes calldata data
-    ) external override {
+    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external override {
         _uniswapV3FlashCallback(fee0, fee1, data);
     }
 
@@ -320,18 +338,11 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @dev Reverts with {SenderNotUniswapPool} if the caller is not the expected Uniswap V3 liquidity pool.
      * @dev Reverts with {ERC20TransferFailure} if the token transfer to repay the flash loan fails.
      */
-    function _uniswapV3FlashCallback(
-        uint256 fee0,
-        uint256 fee1,
-        bytes calldata data
-    ) private nonReentrant {
-        (
-            address user,
-            address adapter,
-            address comet,
-            bytes memory migrationData,
-            uint256 flashAmount
-        ) = abi.decode(data, (address, address, address, bytes, uint256));
+    function _uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) private nonReentrant {
+        (address user, address adapter, address comet, bytes memory migrationData, uint256 flashAmount) = abi.decode(
+            data,
+            (address, address, address, bytes, uint256)
+        );
 
         FlashData memory flashData = _flashData[comet];
 
@@ -340,12 +351,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         uint256 flashAmountWithFee = flashAmount + (flashData.isToken0 ? fee0 : fee1);
 
         (bool success, bytes memory result) = adapter.delegatecall(
-            abi.encodeWithSelector(
-                IProtocolAdapter.executeMigration.selector,
-                user,
-                comet,
-                migrationData
-            )
+            abi.encodeWithSelector(IProtocolAdapter.executeMigration.selector, user, comet, migrationData)
         );
 
         if (!success) {
@@ -361,25 +367,14 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         uint256 balance = IERC20NonStandard(flashData.baseToken).balanceOf(address(this));
 
         if (balance < flashAmountWithFee) {
-            IComet(comet).withdrawFrom(
-                user,
-                address(this),
-                address(flashData.baseToken),
-                flashAmountWithFee - balance
-            );
+            IComet(comet).withdrawFrom(user, address(this), address(flashData.baseToken), flashAmountWithFee - balance);
         }
 
-        if (
-            !_doTransferOut(
-                IERC20NonStandard(flashData.baseToken),
-                flashData.liquidityPool,
-                flashAmountWithFee
-            )
-        ) {
+        if (!_doTransferOut(IERC20NonStandard(flashData.baseToken), flashData.liquidityPool, flashAmountWithFee)) {
             revert ERC20TransferFailure();
         }
 
-        emit AdapterExecuted(adapter, user, flashAmount, flashAmountWithFee);
+        emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
     }
 
     /**
@@ -393,6 +388,8 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
 
         allowedAdapters[adapter] = true;
         _adapters.push(adapter);
+
+        emit AdapterAllowed(adapter);
     }
 
     /**
@@ -409,6 +406,8 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
                 break;
             }
         }
+
+        emit AdapterRemoved(adapter);
     }
 
     /**
@@ -426,11 +425,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
             revert CometAlreadyConfigured(comet);
         }
 
-        _flashData[comet] = FlashData(
-            flashData.liquidityPool,
-            flashData.baseToken,
-            flashData.isToken0
-        );
+        _flashData[comet] = FlashData(flashData.liquidityPool, flashData.baseToken, flashData.isToken0);
+
+        emit FlashDataConfigured(comet, flashData.liquidityPool, flashData.baseToken);
     }
 
     /**
@@ -440,6 +437,8 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      */
     function _removeFlashData(address comet) private validComet(comet) {
         delete _flashData[comet];
+
+        emit FlashDataRemoved(comet);
     }
 
     /**
@@ -450,11 +449,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
      * @return Boolean indicating the success of the transfer.
      * @dev Safely handles tokens that do not return a success value on transfer.
      */
-    function _doTransferOut(
-        IERC20NonStandard asset,
-        address to,
-        uint256 amount
-    ) private returns (bool) {
+    function _doTransferOut(IERC20NonStandard asset, address to, uint256 amount) private returns (bool) {
         asset.transfer(to, amount);
 
         bool success;

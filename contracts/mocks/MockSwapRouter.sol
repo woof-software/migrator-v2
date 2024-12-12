@@ -39,9 +39,7 @@ contract MockSwapRouter is ISwapRouter {
      * @param params The parameters necessary for the swap, including the path.
      * @return amountOut The amount of the received token.
      */
-    function exactInput(
-        ExactInputParams calldata params
-    ) external payable override returns (uint256 amountOut) {
+    function exactInput(ExactInputParams calldata params) external payable override returns (uint256 amountOut) {
         // Decode the path to get the input and output tokens
         (address tokenIn, address tokenOut) = _decodePath(params.path);
 
@@ -86,9 +84,7 @@ contract MockSwapRouter is ISwapRouter {
      * @param params The parameters necessary for the exact output multi-hop swap.
      * @return amountIn The amount of input tokens spent.
      */
-    function exactOutput(
-        ExactOutputParams calldata params
-    ) external payable override returns (uint256 amountIn) {
+    function exactOutput(ExactOutputParams calldata params) external payable override returns (uint256 amountIn) {
         (address tokenIn, address tokenOut) = _decodePath(params.path);
 
         // amountIn = amountOut (1:1)
@@ -125,9 +121,7 @@ contract MockSwapRouter is ISwapRouter {
      * @return tokenIn The address of the input token.
      * @return tokenOut The address of the output token.
      */
-    function _decodePath(
-        bytes memory path
-    ) internal pure returns (address tokenIn, address tokenOut) {
+    function _decodePath(bytes memory path) internal pure returns (address tokenIn, address tokenOut) {
         // For a single-hop path, the format is: tokenIn(20 bytes) + fee(3 bytes) + tokenOut(20 bytes)
         // But since we are mocking, we can simplify and assume that the path is just tokenIn + tokenOut without fee.
 
@@ -142,4 +136,9 @@ contract MockSwapRouter is ISwapRouter {
             tokenOut := mload(add(path, pathLength))
         }
     }
+
+    /**
+     * @notice Allows the contract to receive the native token.
+     */
+    receive() external payable {}
 }

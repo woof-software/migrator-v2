@@ -1,0 +1,13 @@
+{
+    "networks": {
+        "bscTestnet": {
+            "name": "BSC Testnet",
+            "chainId": 97
+        },
+        "ethSepolia": {
+            "name": "Sepolia",
+            "chainId": 11155111
+        }
+    },
+    "supportedChainIds": [97, 11155111]
+}

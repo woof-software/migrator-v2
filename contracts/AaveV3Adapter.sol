@@ -10,7 +10,6 @@ import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {IADebtToken} from "./interfaces/aave/IADebtToken.sol";
 import {IAToken} from "./interfaces/aave/IAToken.sol";
 
-
 /// @title AaveV3Adapter
 /// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
 contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
@@ -97,11 +96,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
      * @param comet Address of the Compound III (Comet) contract
      * @param migrationData Encoded data containing the user's Aave V3 position details
      */
-    function executeMigration(
-        address user,
-        address comet,
-        bytes calldata migrationData
-    ) external override {
+    function executeMigration(address user, address comet, bytes calldata migrationData) external override {
         // Decode the migration data into an AaveV3Position struct
         AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
 
@@ -138,7 +133,6 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(repayAmount);
             } else {
-                bytes memory data = swap.pathOfSwapFlashloan;
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
                     ISwapRouter.ExactOutputParams({
@@ -151,7 +145,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
                 );
             }
         }
-        
+
         // Get the underlying asset address of the debt token
         address underlyingAsset = IADebtToken(borrow.aDebtToken).UNDERLYING_ASSET_ADDRESS();
 
@@ -222,7 +216,6 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         } else {
             IERC20(underlyingAsset).approve(comet, aTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
-
         }
     }
 
@@ -234,8 +227,10 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
      */
     function _isDebtCleared(address user, address asset) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset
-        (, uint256 currentStableDebt, uint256 currentVariableDebt, , , , , , ) = LENDING_POOL
-            .getUserReserveData(asset, user);
+        (, uint256 currentStableDebt, uint256 currentVariableDebt, , , , , , ) = LENDING_POOL.getUserReserveData(
+            asset,
+            user
+        );
         // Debt is cleared if the total debt balance is zero
         return (currentStableDebt + currentVariableDebt) == 0;
     }
