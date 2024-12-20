@@ -4,7 +4,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 pragma solidity 0.8.28;
 
-interface IADebtToken is IERC20 {
+interface ISpDebtToken is IERC20 {
     /**
      * @notice Updates the borrow allowance of a user on the specific debt token.
      * @param delegatee The address receiving the delegated borrowing power

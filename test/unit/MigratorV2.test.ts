@@ -3,259 +3,381 @@ import { loadFixture, ethers, expect, parseEther, Zero, AddressZero } from "../h
 import type {
     MigratorV2,
     AaveV3Adapter,
-    MockAaveLendingPool,
+    SparkAdapter,
+    MockAavePool,
+    MockADebtToken,
+    MockAToken,
+    MockSparkPool,
+    MockSpToken,
+    MockSpDebtToken,
     MockComet,
     MockSwapRouter,
     MockUniswapV3Pool,
     MockDaiUsds,
-    MockERC20,
-    MockADebtToken,
-    MockAToken
+    MockERC20
 } from "../../typechain-types";
-import { use } from "chai";
-import { deploy } from "@openzeppelin/hardhat-upgrades/dist/utils";
 
 const NATIVE_TOKEN_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
-describe("MigratorV2", function () {
-    async function fixtureSetup() {
-        const [owner, user, adapterDeployer] = await ethers.getSigners();
-        const MockERC20 = await ethers.getContractFactory("MockERC20");
-
+describe("MigratorV2AndAaveV3", function () {
+    // Setup Mocks: deploy all necessary mock contracts
+    async function setupMocks() {
+        const [deployer] = await ethers.getSigners();
         // Deploy tokens
-        const mockDAI: MockERC20 = (await MockERC20.deploy(
-            "Mock DAI",
-            "DAI",
-            parseEther("1000000"),
-            owner.address
-        )) as MockERC20;
+        // Deploy mock DAI
+        const MockERC20 = await ethers.getContractFactory("MockERC20");
+        const mockDAI = await MockERC20.deploy("Mock DAI", "DAI", parseEther("1000000"), deployer.address);
         await mockDAI.deployed();
-
-        const mockUSDS: MockERC20 = (await MockERC20.deploy(
-            "Mock USDS",
-            "mUSDS",
-            parseEther("1000000"),
-            owner.address
-        )) as MockERC20;
+        // Deploy mock USDS
+        const mockUSDS = await MockERC20.deploy("Mock USDS", "mUSDS", parseEther("1000000"), deployer.address);
         await mockUSDS.deployed();
-
+        // Deploy mock WETH9
         const MockWETH9 = await ethers.getContractFactory("MockWETH9");
         const mockWETH9 = await MockWETH9.deploy("Mock WETH", "WETH");
         await mockWETH9.deployed();
 
-        const MockAToken = await ethers.getContractFactory("MockAToken");
-        const mockAToken: MockAToken = (await MockAToken.deploy(
-            "Mock WETH AToken",
-            "aWETH",
-            NATIVE_TOKEN_ADDRESS
-        )) as MockAToken;
-        await mockAToken.deployed();
-
-        const MockADebtToken = await ethers.getContractFactory("MockADebtToken");
-        const mockADebtToken: MockADebtToken = (await MockADebtToken.deploy(
-            "Mock DAI ADebtToken",
-            "aDebtDAI",
-            mockDAI.address
-        )) as MockADebtToken;
-        await mockADebtToken.deployed();
-
+        // Deploy mock DaiUsds converter
         const MockDaiUsds = await ethers.getContractFactory("MockDaiUsds");
-        const mockDaiUsds: MockDaiUsds = (await MockDaiUsds.deploy(mockDAI.address, mockUSDS.address)) as MockDaiUsds;
+        const mockDaiUsds = await MockDaiUsds.deploy(mockDAI.address, mockUSDS.address);
         await mockDaiUsds.deployed();
-
-        // Deploy mock Aave Lending Pool
-        const MockAaveLendingPool = await ethers.getContractFactory("MockAaveLendingPool");
-        const mockAaveLendingPool: MockAaveLendingPool = (await MockAaveLendingPool.deploy(
-            mockAToken.address,
-            mockADebtToken.address
-        )) as MockAaveLendingPool;
-        await mockAaveLendingPool.deployed();
 
         // Deploy mock Comet
         const MockComet = await ethers.getContractFactory("MockComet");
-        const mockComet: MockComet = (await MockComet.deploy(mockUSDS.address, mockWETH9.address)) as MockComet;
+        const mockComet = await MockComet.deploy(mockUSDS.address, mockWETH9.address);
         await mockComet.deployed();
+
+        // Deploy mock Aave Lending Pool with mock AToken and mock Debt Token
+        // Deploy mock Aave Token
+        const MockAToken = await ethers.getContractFactory("MockAToken");
+        const mockAToken = await MockAToken.deploy("Mock WETH AToken", "aWETH", NATIVE_TOKEN_ADDRESS);
+        await mockAToken.deployed();
+        // Deploy mock Aave Debt Token
+        const MockADebtToken = await ethers.getContractFactory("MockADebtToken");
+        const mockADebtToken = await MockADebtToken.deploy("Mock DAI ADebtToken", "aDebtDAI", mockDAI.address);
+        await mockADebtToken.deployed();
+        // Deploy Aave Pool
+        const MockAaveLendingPool = await ethers.getContractFactory("MockAavePool");
+        const mockAavePool = await MockAaveLendingPool.deploy(mockAToken.address, mockADebtToken.address);
+        await mockAavePool.deployed();
+
+        // Deploy mock Spark Lending Pool with mock Spark Token and mock Debt Token
+        // Deploy Spark Token
+        const MockSpToken = await ethers.getContractFactory("MockSpToken");
+        const mockSpToken = await MockSpToken.deploy("Mock WETH spToken", "spWETH", NATIVE_TOKEN_ADDRESS);
+        await mockSpToken.deployed();
+        // Deploy Spark Debt Token
+        const MockSpDebtToken = await ethers.getContractFactory("MockSpDebtToken");
+        const mockSpDebtToken = await MockSpDebtToken.deploy("Mock DAI SpDebtToken", "spDebtDAI", mockDAI.address);
+        await mockSpDebtToken.deployed();
+        // Deploy Spark Pool
+        const MockSparkPool = await ethers.getContractFactory("MockSparkPool");
+        const mockSparkPool = await MockSparkPool.deploy(mockSpToken.address, mockSpDebtToken.address);
+        await mockSparkPool.deployed();
 
         // Deploy mock Uniswap V3 Pool for flash loans
         const MockUniswapV3Pool = await ethers.getContractFactory("MockUniswapV3Pool");
-        const mockUniswapV3Pool: MockUniswapV3Pool = (await MockUniswapV3Pool.deploy(
-            mockUSDS.address,
-            mockDAI.address
-        )) as MockUniswapV3Pool;
+        const mockUniswapV3Pool = await MockUniswapV3Pool.deploy(mockUSDS.address, mockDAI.address);
         await mockUniswapV3Pool.deployed();
-
         // Deploy mock Swap Router
         const MockSwapRouter = await ethers.getContractFactory("MockSwapRouter");
-        const mockSwapRouter: MockSwapRouter = (await MockSwapRouter.deploy()) as MockSwapRouter;
+        const mockSwapRouter = await MockSwapRouter.deploy();
         await mockSwapRouter.deployed();
-
-        // Deploy AaveV3Adapter
-        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", adapterDeployer);
-        const aaveV3Adapter: AaveV3Adapter = (await AaveV3AdapterFactory.deploy(
-            mockSwapRouter.address,
-            mockDaiUsds.address,
-            mockDAI.address,
-            mockUSDS.address,
-            mockWETH9.address,
-            mockAaveLendingPool.address
-        )) as AaveV3Adapter;
-        await aaveV3Adapter.deployed();
-
-        // Set up flashData for migrator
-        const flashData = {
-            liquidityPool: mockUniswapV3Pool.address,
-            baseToken: mockUSDS.address,
-            isToken0: true
-        };
-
-        // Deploy MigratorV2
-        const MigratorV2Factory = await ethers.getContractFactory("MigratorV2");
-        const migrator: MigratorV2 = (await MigratorV2Factory.deploy(
-            owner.address, // multisig (owner)
-            [aaveV3Adapter.address], // adapters
-            [mockComet.address], // comets
-            [flashData] // flash data
-        )) as MigratorV2;
-        await migrator.deployed();
-
+        // Initial financing of contracts
         // Fund Swap Router
         await mockDAI.transfer(mockSwapRouter.address, parseEther("2000"));
         await mockUSDS.transfer(mockSwapRouter.address, parseEther("2000"));
-        await owner.sendTransaction({
+        await deployer.sendTransaction({
             to: mockSwapRouter.address,
             value: parseEther("2000")
         });
-
         // Fund Uniswap V3 Pool
         await mockDAI.transfer(mockUniswapV3Pool.address, parseEther("2000"));
         await mockUSDS.transfer(mockUniswapV3Pool.address, parseEther("2000"));
         await mockWETH9.transfer(mockUniswapV3Pool.address, parseEther("2000"));
-        await owner.sendTransaction({
+        await deployer.sendTransaction({
             to: mockUniswapV3Pool.address,
             value: parseEther("2000")
         });
-
         // Fund Aave Lending Pool
-        await mockDAI.transfer(mockAaveLendingPool.address, parseEther("2000"));
-        await mockUSDS.transfer(mockAaveLendingPool.address, parseEther("2000"));
-        await mockWETH9.transfer(mockAaveLendingPool.address, parseEther("2000"));
-        await owner.sendTransaction({
-            to: mockAaveLendingPool.address,
+        await mockDAI.transfer(mockAavePool.address, parseEther("2000"));
+        await mockUSDS.transfer(mockAavePool.address, parseEther("2000"));
+        await mockWETH9.transfer(mockAavePool.address, parseEther("2000"));
+        await deployer.sendTransaction({
+            to: mockAavePool.address,
             value: parseEther("2000")
         });
-
+        // Fund Spark Lending Pool
+        await mockDAI.transfer(mockSparkPool.address, parseEther("2000"));
+        await mockUSDS.transfer(mockSparkPool.address, parseEther("2000"));
+        await mockWETH9.transfer(mockSparkPool.address, parseEther("2000"));
+        await deployer.sendTransaction({
+            to: mockSparkPool.address,
+            value: parseEther("2000")
+        });
         // Fund Converter (DaiUsds)
         await mockDAI.transfer(mockDaiUsds.address, parseEther("2000"));
         await mockUSDS.transfer(mockDaiUsds.address, parseEther("2000"));
-
-        // // Fund Comet
+        // Fund Comet
         await mockUSDS.transfer(mockComet.address, parseEther("2000"));
 
-        // // Deposit to Aave
-        // const depositAmount = parseEther("500");
-        // expect(await mockAToken.balanceOf(user.address)).to.equal(Zero);
-        // await mockAaveLendingPool.connect(user).deposit(NATIVE_TOKEN_ADDRESS, depositAmount, { value: depositAmount });
+        return {
+            deployer,
+            // tokens
+            mockDAI,
+            mockUSDS,
+            mockWETH9,
+            // Aave
+            mockAavePool,
+            mockAToken,
+            mockADebtToken,
+            // Spark
+            mockSparkPool,
+            mockSpToken,
+            mockSpDebtToken,
+            // other
+            mockDaiUsds,
+            mockComet,
+            mockUniswapV3Pool,
+            mockSwapRouter
+        };
+    }
 
-        // expect(await mockAToken.balanceOf(user.address)).to.equal(depositAmount);
+    // async function setupSparkMocks() {
+    //     const [deployer] = await ethers.getSigners();
+    //     // Deploy tokens
+    //     const MockERC20 = await ethers.getContractFactory("MockERC20");
+    //     const mockDAI = await MockERC20.deploy("Mock DAI", "DAI", parseEther("1000000"), deployer.address);
+    //     await mockDAI.deployed();
 
-        // // Borrow from Aave
-        // const borrowAmount = parseEther("100");
-        // expect(await mockADebtToken.balanceOf(user.address)).to.equal(Zero);
-        // await mockAaveLendingPool.connect(user).borrow(mockDAI.address, borrowAmount);
-        // expect(await mockADebtToken.balanceOf(user.address)).to.equal(borrowAmount);
+    //     const mockUSDS = await MockERC20.deploy("Mock USDS", "mUSDS", parseEther("1000000"), deployer.address);
+    //     await mockUSDS.deployed();
 
-        // For debugging
-        /**
-        console.log("USDS address", mockUSDS.address);
-        console.log("DAI address", mockDAI.address);
-        console.log("WrappedToken address", mockWETH9.address);
-        console.log("MockDaiUsds address", mockDaiUsds.address);
+    //     const MockWETH9 = await ethers.getContractFactory("MockWETH9");
+    //     const mockWETH9 = await MockWETH9.deploy("Mock WETH", "WETH");
+    //     await mockWETH9.deployed();
 
-        console.log("MockAaveLendingPool address", mockAaveLendingPool.address);
-        console.log("MockComet address", mockComet.address);
-        console.log("MockUniswapV3Pool address", mockUniswapV3Pool.address);
-        console.log("MockSwapRouter address", mockSwapRouter.address);
+    //     const MockSpToken = await ethers.getContractFactory("MockAToken");
+    //     const mockSpToken = await MockSpToken.deploy("Mock WETH spToken", "spWETH", NATIVE_TOKEN_ADDRESS);
+    //     await mockSpToken.deployed();
 
-        console.log("AaveV3Adapter address", aaveV3Adapter.address);
-        console.log("MigratorV2 address", migrator.address);
-        */
+    //     const MockSpDebtToken = await ethers.getContractFactory("MockADebtToken");
+    //     const mockSpDebtToken = await MockSpDebtToken.deploy("Mock DAI SpDebtToken", "spDebtDAI", mockDAI.address);
+    //     await mockSpDebtToken.deployed();
+
+    //     const MockDaiUsds = await ethers.getContractFactory("MockDaiUsds");
+    //     const mockDaiUsds = await MockDaiUsds.deploy(mockDAI.address, mockUSDS.address);
+    //     await mockDaiUsds.deployed();
+
+    //     // Deploy mock Aave Lending Pool
+    //     const MockAaveLendingPool = await ethers.getContractFactory("MockAavePool");
+    //     const mockAavePool = await MockAaveLendingPool.deploy(mockAToken.address, mockADebtToken.address);
+    //     await mockAavePool.deployed();
+    //     // Deploy mock Comet
+    //     const MockComet = await ethers.getContractFactory("MockComet");
+    //     const mockComet = await MockComet.deploy(mockUSDS.address, mockWETH9.address);
+    //     await mockComet.deployed();
+    //     // Deploy mock Uniswap V3 Pool for flash loans
+    //     const MockUniswapV3Pool = await ethers.getContractFactory("MockUniswapV3Pool");
+    //     const mockUniswapV3Pool = await MockUniswapV3Pool.deploy(mockUSDS.address, mockDAI.address);
+    //     await mockUniswapV3Pool.deployed();
+    //     // Deploy mock Swap Router
+    //     const MockSwapRouter = await ethers.getContractFactory("MockSwapRouter");
+    //     const mockSwapRouter = await MockSwapRouter.deploy();
+    //     await mockSwapRouter.deployed();
+
+    //     // 🪙 Initial financing of contracts
+    //     // Fund Swap Router
+    //     await mockDAI.transfer(mockSwapRouter.address, parseEther("2000"));
+    //     await mockUSDS.transfer(mockSwapRouter.address, parseEther("2000"));
+    //     await deployer.sendTransaction({
+    //         to: mockSwapRouter.address,
+    //         value: parseEther("2000")
+    //     });
+    //     // Fund Uniswap V3 Pool
+    //     await mockDAI.transfer(mockUniswapV3Pool.address, parseEther("2000"));
+    //     await mockUSDS.transfer(mockUniswapV3Pool.address, parseEther("2000"));
+    //     await mockWETH9.transfer(mockUniswapV3Pool.address, parseEther("2000"));
+    //     await deployer.sendTransaction({
+    //         to: mockUniswapV3Pool.address,
+    //         value: parseEther("2000")
+    //     });
+    //     // Fund Aave Lending Pool
+    //     await mockDAI.transfer(mockAavePool.address, parseEther("2000"));
+    //     await mockUSDS.transfer(mockAavePool.address, parseEther("2000"));
+    //     await mockWETH9.transfer(mockAavePool.address, parseEther("2000"));
+    //     await deployer.sendTransaction({
+    //         to: mockAavePool.address,
+    //         value: parseEther("2000")
+    //     });
+    //     // Fund Converter (DaiUsds)
+    //     await mockDAI.transfer(mockDaiUsds.address, parseEther("2000"));
+    //     await mockUSDS.transfer(mockDaiUsds.address, parseEther("2000"));
+    //     // Fund Comet
+    //     await mockUSDS.transfer(mockComet.address, parseEther("2000"));
+
+    //     return {
+    //         deployer,
+    //         mockDAI,
+    //         mockUSDS,
+    //         mockWETH9,
+    //         mockAToken,
+    //         mockADebtToken,
+    //         mockDaiUsds,
+    //         mockAavePool,
+    //         mockComet,
+    //         mockUniswapV3Pool,
+    //         mockSwapRouter
+    //     };
+    // }
+
+    // 🧪 Setup Test Environment: розгортає основний контракт із використанням моків
+    async function setupTestEnvironment() {
+        const mocks = await setupMocks();
+
+        const [_, owner, user, adapterDeployer] = await ethers.getSigners();
+        // Deploy AaveV3Adapter
+        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", adapterDeployer);
+        const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy(
+            mocks.mockSwapRouter.address,
+            mocks.mockDaiUsds.address,
+            mocks.mockDAI.address,
+            mocks.mockUSDS.address,
+            mocks.mockWETH9.address,
+            mocks.mockAavePool.address,
+            mocks.mockAavePool.address
+        )) as AaveV3Adapter;
+        await aaveV3Adapter.deployed();
+
+        // Deploy SparkAdapter
+        const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", adapterDeployer);
+        const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy(
+            mocks.mockSwapRouter.address,
+            mocks.mockDaiUsds.address,
+            mocks.mockDAI.address,
+            mocks.mockUSDS.address,
+            mocks.mockWETH9.address,
+            mocks.mockSparkPool.address,
+            mocks.mockSparkPool.address
+        )) as SparkAdapter;
+
+        await sparkAdapter.deployed();
+
+        const adapters = [aaveV3Adapter.address, sparkAdapter.address];
+        const comets = [mocks.mockComet.address];
+
+        // Set up flashData for migrator
+        const flashData = [
+            {
+                liquidityPool: mocks.mockUniswapV3Pool.address,
+                baseToken: mocks.mockUSDS.address,
+                isToken0: true
+            }
+        ];
+
+        const MigratorV2Factory = await ethers.getContractFactory("MigratorV2");
+        const migrator = await MigratorV2Factory.connect(owner).deploy(owner.address, adapters, comets, flashData);
+        await migrator.deployed();
 
         return {
+            mocks,
             owner,
             user,
             adapterDeployer,
-            mockDAI,
-            mockUSDS,
-            mockAToken,
-            mockADebtToken,
-            mockWETH9,
-            mockDaiUsds,
-            mockAaveLendingPool,
-            mockComet,
-            mockUniswapV3Pool,
-            mockSwapRouter,
             aaveV3Adapter,
+            sparkAdapter,
             migrator
         };
     }
 
     describe("# Deployment", function () {
-        it("Should deploy MigratorV2 to a proper address", async () => {
-            const { migrator, user, adapterDeployer } = await loadFixture(fixtureSetup);
-            expect(migrator.address).to.be.properAddress;
+        context("* AaveV3Adapter", async () => {
+            it("Should deploy AaveV3Adapter to a proper address", async () => {
+                const { aaveV3Adapter } = await loadFixture(setupTestEnvironment);
+                expect(aaveV3Adapter.address).to.be.properAddress;
+            });
 
-            console.log("user.address", user.address);
-            console.log("adapterDeployer.address", adapterDeployer.address);
+            it("Should have correct dependencies", async () => {
+                const { aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
+                expect(await aaveV3Adapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await aaveV3Adapter.DAI_USDS_CONVERTER()).to.equal(mocks.mockDaiUsds.address);
+                expect(await aaveV3Adapter.DAI()).to.equal(mocks.mockDAI.address);
+                expect(await aaveV3Adapter.USDS()).to.equal(mocks.mockUSDS.address);
+                expect(await aaveV3Adapter.WRAPPED_NATIVE_TOKEN()).to.equal(mocks.mockWETH9.address);
+                expect(await aaveV3Adapter.LENDING_POOL()).to.equal(mocks.mockAavePool.address);
+            });
         });
 
-        it("Should have correct adapter registered", async () => {
-            const { migrator, aaveV3Adapter } = await loadFixture(fixtureSetup);
-            const adapters = await migrator.getAdapters();
-            expect(adapters).to.include(aaveV3Adapter.address);
+        context("* SparkAdapter", async () => {
+            it("Should deploy SparkAdapter to a proper address", async () => {
+                const { sparkAdapter } = await loadFixture(setupTestEnvironment);
+                expect(sparkAdapter.address).to.be.properAddress;
+            });
+
+            it("Should have correct dependencies", async () => {
+                const { sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                expect(await sparkAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await sparkAdapter.DAI_USDS_CONVERTER()).to.equal(mocks.mockDaiUsds.address);
+                expect(await sparkAdapter.DAI()).to.equal(mocks.mockDAI.address);
+                expect(await sparkAdapter.USDS()).to.equal(mocks.mockUSDS.address);
+                expect(await sparkAdapter.WRAPPED_NATIVE_TOKEN()).to.equal(mocks.mockWETH9.address);
+                expect(await sparkAdapter.LENDING_POOL()).to.equal(mocks.mockSparkPool.address);
+            });
         });
 
-        it("Should revert if migrating with invalid adapter", async () => {
-            const { migrator, user } = await loadFixture(fixtureSetup);
-            await expect(
-                migrator.connect(user).migrate(AddressZero, AddressZero, "0x", 1)
-            ).to.be.revertedWithCustomError(migrator, "InvalidAdapter");
+        context("* MigratorV2", async () => {
+            it("Should deploy MigratorV2 to a proper address", async () => {
+                const { migrator } = await loadFixture(setupTestEnvironment);
+                expect(migrator.address).to.be.properAddress;
+            });
+
+            it("Should have correct owner", async () => {
+                const { migrator, owner } = await loadFixture(setupTestEnvironment);
+                expect(await migrator.owner()).to.equal(owner.address);
+            });
+
+            it("Should have correct adapter registered", async () => {
+                const { migrator, aaveV3Adapter, sparkAdapter } = await loadFixture(setupTestEnvironment);
+                const adapters = await migrator.getAdapters();
+                expect(adapters).to.include(aaveV3Adapter.address);
+                expect(adapters).to.include(sparkAdapter.address);
+            });
+
+            // it("Should revert if migrating with invalid adapter", async () => {
+            //     const { migrator, user } = await loadFixture(setupTestEnvironment);
+            //     await expect(
+            //         migrator.connect(user).migrate(AddressZero, AddressZero, "0x", 1)
+            //     ).to.be.revertedWithCustomError(migrator, "InvalidAdapter");
+            // });
         });
     });
 
     describe("# Migrate functionality", function () {
-        context("Collateral: ETH. Borrow: DAI. Comet: USDS ", async () => {
+        context("* AaveV3 -> Comet", async () => {
+            // collateral - ETH; borrow - DAI; comet - USDS.
             it("Should migrate a user's position successfully: Scn.#1", async () => {
-                const {
-                    migrator,
-                    user,
-                    aaveV3Adapter,
-                    mockComet,
-                    mockAToken,
-                    mockADebtToken,
-                    mockUSDS,
-                    mockDAI,
-                    mockAaveLendingPool
-                } = await loadFixture(fixtureSetup);
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
 
+                // Setup for AaveV3 -> Comet migration
                 // Deposit to Aave
                 const depositAmount = parseEther("500");
-                expect(await mockAToken.balanceOf(user.address)).to.equal(Zero);
-                await mockAaveLendingPool
+                expect(await mocks.mockAToken.balanceOf(user.address)).to.equal(Zero);
+                await mocks.mockAavePool
                     .connect(user)
                     .deposit(NATIVE_TOKEN_ADDRESS, depositAmount, { value: depositAmount });
 
-                expect(await mockAToken.balanceOf(user.address)).to.equal(depositAmount);
+                expect(await mocks.mockAToken.balanceOf(user.address)).to.equal(depositAmount);
 
                 // Borrow from Aave
                 const borrowAmount = parseEther("100");
-                expect(await mockADebtToken.balanceOf(user.address)).to.equal(Zero);
-                await mockAaveLendingPool.connect(user).borrow(mockDAI.address, borrowAmount);
-                expect(await mockADebtToken.balanceOf(user.address)).to.equal(borrowAmount);
+                expect(await mocks.mockADebtToken.balanceOf(user.address)).to.equal(Zero);
+                await mocks.mockAavePool.connect(user).borrow(mocks.mockDAI.address, borrowAmount);
+                expect(await mocks.mockADebtToken.balanceOf(user.address)).to.equal(borrowAmount);
 
                 // const collateralAmount = mockAToken.balanceOf(user.address)
 
+                // Init migration
                 // Approve migration
-                await mockAToken.connect(user).approve(migrator.address, parseEther("500"));
+                await mocks.mockAToken.connect(user).approve(migrator.address, parseEther("500"));
                 const FEE_3000 = 3000; // 0.3%
                 const FEE_500 = 500; // 0.05%
 
@@ -263,37 +385,35 @@ describe("MigratorV2", function () {
                 const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
                 const fee500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_500), 3); // 0x01F4
 
-                console.log(`Fee 3000 (3 bytes) = ${fee3000}`);
-                console.log(`Fee 500 (3 bytes) = ${fee500}`);
+                // @DEBUG
+                // console.log(`Fee 3000 (3 bytes) = ${fee3000}`);
+                // console.log(`Fee 500 (3 bytes) = ${fee500}`);
 
                 const position = {
                     borrows: [
                         {
-                            aDebtToken: mockADebtToken.address,
+                            aDebtToken: mocks.mockADebtToken.address,
                             amount: parseEther("100")
                         }
                     ],
-                    collateral: [{ aToken: mockAToken.address, amount: parseEther("500") }],
+                    collateral: [{ aToken: mocks.mockAToken.address, amount: parseEther("500") }],
                     swaps: [
                         {
                             pathOfSwapFlashloan: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(mockUSDS.address, 20),
-                                ethers.utils.hexZeroPad(mockDAI.address, 20)
+                                ethers.utils.hexZeroPad(mocks.mockUSDS.address, 20),
+                                fee3000,
+                                ethers.utils.hexZeroPad(mocks.mockDAI.address, 20)
                             ]),
                             amountInMaximum: parseEther("100"),
-                            // pathSwapCollateral: ethers.utils.concat([
-                            //     ethers.utils.hexZeroPad(NATIVE_TOKEN_ADDRESS, 20),
-                            //     ethers.utils.hexZeroPad(mockUSDS.address, 20),
-                            // ]),
                             pathSwapCollateral: [],
-                            // amountOutMinimum: parseEther("500"),
                             amountOutMinimum: 0
                         }
                     ]
                 };
-                console.log("position", position.swaps[0].pathOfSwapFlashloan);
-                console.log("USDS address", mockUSDS.address);
-                console.log("DAI address", mockDAI.address);
+                // @DEBUG
+                // console.log("position", position.swaps[0].pathOfSwapFlashloan);
+                // console.log("USDS address", mocks.mockUSDS.address);
+                // console.log("DAI address", mocks.mockDAI.address);
 
                 const encodedData = ethers.utils.defaultAbiCoder.encode(
                     [
@@ -304,48 +424,40 @@ describe("MigratorV2", function () {
 
                 const flashAmount = parseEther("500");
                 await expect(
-                    migrator.connect(user).migrate(aaveV3Adapter.address, mockComet.address, encodedData, flashAmount)
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3Adapter.address, mocks.mockComet.address, encodedData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
-                const userCollateral = await mockComet.collateralBalanceOf(user.address, mockDAI.address);
+                const userCollateral = await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockDAI.address);
                 expect(userCollateral).to.not.equal(Zero);
             });
         });
 
-        context("Collateral: DAI. Borrow: ETH. Comet: USDS ", async () => {
-            it.only("Should migrate a user's position successfully: Scn.#2", async () => {
-                const {
-                    migrator,
-                    user,
-                    aaveV3Adapter,
-                    mockComet,
-                    mockAToken,
-                    mockADebtToken,
-                    mockUSDS,
-                    mockDAI,
-                    mockWETH9,
-                    mockAaveLendingPool
-                } = await loadFixture(fixtureSetup);
+        context("* Spark -> Comet", async () => {
+            it("Should migrate a user's position successfully: Scn.#2", async () => {
+                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
 
-                // Deposit to Aave
+                // Deposit to Spark
                 const depositAmount = parseEther("500");
-                expect(await mockAToken.balanceOf(user.address)).to.equal(Zero);
-                await mockAaveLendingPool
+                expect(await mocks.mockSpToken.balanceOf(user.address)).to.equal(Zero);
+
+                await mocks.mockSparkPool
                     .connect(user)
-                    .deposit(mockDAI.address, depositAmount, { value: depositAmount });
+                    .deposit(mocks.mockDAI.address, depositAmount, { value: depositAmount });
 
-                expect(await mockAToken.balanceOf(user.address)).to.equal(depositAmount);
+                expect(await mocks.mockSpToken.balanceOf(user.address)).to.equal(depositAmount);
 
-                // Borrow from Aave
+                // Borrow from Spark
                 const borrowAmount = parseEther("100");
-                expect(await mockADebtToken.balanceOf(user.address)).to.equal(Zero);
-                await mockAaveLendingPool.connect(user).borrow(NATIVE_TOKEN_ADDRESS, borrowAmount);
-                expect(await mockADebtToken.balanceOf(user.address)).to.equal(borrowAmount);
+                expect(await mocks.mockSpDebtToken.balanceOf(user.address)).to.equal(Zero);
+                await mocks.mockSparkPool.connect(user).borrow(NATIVE_TOKEN_ADDRESS, borrowAmount);
+                expect(await mocks.mockSpDebtToken.balanceOf(user.address)).to.equal(borrowAmount);
 
                 // const collateralAmount = mockAToken.balanceOf(user.address)
 
                 // Approve migration
-                await mockAToken.connect(user).approve(migrator.address, parseEther("500"));
+                await mocks.mockSpToken.connect(user).approve(migrator.address, parseEther("500"));
                 const FEE_3000 = 3000; // 0.3%
                 const FEE_500 = 500; // 0.05%
 
@@ -353,22 +465,24 @@ describe("MigratorV2", function () {
                 const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
                 const fee500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_500), 3); // 0x01F4
 
-                console.log(`Fee 3000 (3 bytes) = ${fee3000}`);
-                console.log(`Fee 500 (3 bytes) = ${fee500}`);
+                // @DEBUG
+                // console.log(`Fee 3000 (3 bytes) = ${fee3000}`);
+                // console.log(`Fee 500 (3 bytes) = ${fee500}`);
 
                 const position = {
                     borrows: [
                         {
-                            aDebtToken: mockADebtToken.address,
+                            aDebtToken: mocks.mockSpDebtToken.address,
                             amount: parseEther("100")
                         }
                     ],
-                    collateral: [{ aToken: mockAToken.address, amount: parseEther("500") }],
+                    collateral: [{ aToken: mocks.mockSpToken.address, amount: parseEther("500") }],
                     swaps: [
                         {
                             pathOfSwapFlashloan: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(mockUSDS.address, 20),
-                                ethers.utils.hexZeroPad(mockDAI.address, 20)
+                                ethers.utils.hexZeroPad(mocks.mockUSDS.address, 20),
+                                fee3000,
+                                ethers.utils.hexZeroPad(mocks.mockDAI.address, 20)
                             ]),
                             amountInMaximum: parseEther("100"),
                             // pathSwapCollateral: ethers.utils.concat([
@@ -381,9 +495,10 @@ describe("MigratorV2", function () {
                         }
                     ]
                 };
-                console.log("position", position.swaps[0].pathOfSwapFlashloan);
-                console.log("USDS address", mockUSDS.address);
-                console.log("DAI address", mockDAI.address);
+                // @DEBUG
+                // console.log("position", position.swaps[0].pathOfSwapFlashloan);
+                // console.log("USDS address", mocks.mockUSDS.address);
+                // console.log("DAI address", mocks.mockDAI.address);
 
                 const encodedData = ethers.utils.defaultAbiCoder.encode(
                     [
@@ -394,32 +509,34 @@ describe("MigratorV2", function () {
 
                 const flashAmount = parseEther("500");
                 await expect(
-                    migrator.connect(user).migrate(aaveV3Adapter.address, mockComet.address, encodedData, flashAmount)
+                    migrator
+                        .connect(user)
+                        .migrate(sparkAdapter.address, mocks.mockComet.address, encodedData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
-                const userCollateral = await mockComet.collateralBalanceOf(user.address, mockDAI.address);
+                const userCollateral = await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockDAI.address);
                 expect(userCollateral).to.equal(Zero);
             });
         });
 
         it("Should revert if flash amount is zero", async () => {
-            const { migrator, user, aaveV3Adapter, mockComet } = await loadFixture(fixtureSetup);
+            const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
             await expect(
-                migrator.connect(user).migrate(aaveV3Adapter.address, mockComet.address, "0x", 0)
+                migrator.connect(user).migrate(sparkAdapter.address, mocks.mockComet.address, "0x", 0)
             ).to.be.revertedWithCustomError(migrator, "InvalidFlashAmount");
         });
 
         it("Should revert if migration data is empty", async () => {
-            const { migrator, user, aaveV3Adapter, mockComet } = await loadFixture(fixtureSetup);
+            const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
             await expect(
-                migrator.connect(user).migrate(aaveV3Adapter.address, mockComet.address, "0x", parseEther("100"))
+                migrator.connect(user).migrate(sparkAdapter.address, mocks.mockComet.address, "0x", parseEther("100"))
             ).to.be.revertedWithCustomError(migrator, "InvalidMigrationData");
         });
 
         it("Should revert if Comet is not supported", async () => {
-            const { migrator, user, aaveV3Adapter } = await loadFixture(fixtureSetup);
+            const { migrator, user, sparkAdapter } = await loadFixture(setupTestEnvironment);
             await expect(
-                migrator.connect(user).migrate(aaveV3Adapter.address, AddressZero, "0x", parseEther("100"))
+                migrator.connect(user).migrate(sparkAdapter.address, AddressZero, "0x", parseEther("100"))
             ).to.be.revertedWithCustomError(migrator, "CometIsNotSupported");
         });
     });

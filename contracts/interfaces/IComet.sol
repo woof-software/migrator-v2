@@ -55,7 +55,13 @@ interface IComet {
     event AbsorbDebt(address indexed absorber, address indexed borrower, uint basePaidOut, uint usdValue);
 
     /// @notice Event emitted when a user's collateral is absorbed by the protocol
-    event AbsorbCollateral(address indexed absorber, address indexed borrower, address indexed asset, uint collateralAbsorbed, uint usdValue);
+    event AbsorbCollateral(
+        address indexed absorber,
+        address indexed borrower,
+        address indexed asset,
+        uint collateralAbsorbed,
+        uint usdValue
+    );
 
     /// @notice Event emitted when a collateral asset is purchased from the protocol
     event BuyCollateral(address indexed buyer, address indexed asset, uint baseAmount, uint collateralAmount);
@@ -100,7 +106,13 @@ interface IComet {
     function balanceOf(address owner) external view returns (uint256);
     function borrowBalanceOf(address account) external view returns (uint256);
 
-    function pause(bool supplyPaused, bool transferPaused, bool withdrawPaused, bool absorbPaused, bool buyPaused) external;
+    function pause(
+        bool supplyPaused,
+        bool transferPaused,
+        bool withdrawPaused,
+        bool absorbPaused,
+        bool buyPaused
+    ) external;
     function isSupplyPaused() external view returns (bool);
     function isTransferPaused() external view returns (bool);
     function isWithdrawPaused() external view returns (bool);
@@ -159,5 +171,6 @@ interface IComet {
     function initializeStorage() external;
 
     function collateralBalanceOf(address account, address asset) external view returns (uint128);
+    function isAllowed(address owner, address manager) external view returns (bool);
     function allow(address manager, bool isAllowed_) external;
 }

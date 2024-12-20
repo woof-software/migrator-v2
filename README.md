@@ -117,31 +117,159 @@ The `migrate()` method is the main function that users will call to start a migr
 | `migrationData` | `bytes`     | Encoded data that describes the user’s position |
 | `flashAmount`   | `uint256`   | Amount of the flash loan required for the migration |
 
+
 ---
 
-## 💻 Usage Example
+## 🔄 Migration Process Overview
+## 🛠️ How to Formulate Transactions for `migrate` Method
+
+The `migrate` method is the main entry point for initiating the migration of user positions. Below are detailed examples of transaction formation for different scenarios:
+
+### **Example 1: Swap with pathOfSwapFlashloan and pathSwapCollateral**
+
+Use the Uniswap V3 SDK to define paths for swaps. Refer to the following guides:
+
+-   [Uniswap V3 Routing](https://docs.uniswap.org/sdk/v3/guides/swaps/routing)
+-   [Uniswap V3 Multihop Swaps](https://docs.uniswap.org/contracts/v3/guides/swaps/multihop-swaps)
 
 ```javascript
-// Required imports
-const { ethers } = require("hardhat");
-
-// Assuming we have an instance of the MigratorV2 contract
-const migrator = await ethers.getContractAt("MigratorV2", "0x123...456");
-
-// Prepare migration data
 const migrationData = ethers.utils.defaultAbiCoder.encode(
-  ["address", "uint256"],
-  ["0xAaveV3DebtTokenAddress", "1000000000000000000"] // Borrow position (token address and amount)
+    [
+        "tuple(tuple(address aDebtToken, uint256 amount)[] borrows, tuple(address aToken, uint256 amount)[] collateral, tuple(bytes pathOfSwapFlashloan, uint256 amountInMaximum, bytes pathSwapCollateral, uint256 amountOutMinimum)[] swaps)"
+    ],
+    [
+        [
+            {
+                aDebtToken: "0xDebtTokenAddress",
+                amount: ethers.utils.parseUnits("100", 6)
+            }
+        ],
+        [
+            {
+                aToken: "0xCollateralTokenAddress",
+                amount: ethers.utils.parseUnits("1", 18)
+            }
+        ],
+        [
+            {
+                // Flashloan Swap Path (DAI, poolFee, USDC)
+                pathOfSwapFlashloan: "0xEncodedFlashloanSwapPath",
+                amountInMaximum: ethers.utils.parseUnits("10000", 6),
+                // Collateral Swap Path (WBTC, poolFee, DAI)
+                pathSwapCollateral: "0xEncodedCollateralSwapPath",
+                amountOutMinimum: ethers.utils.parseUnits("0.1", 8)
+            }
+        ]
+    ]
 );
 
-// Call the migrate function
 await migrator.migrate(
-  "0xProtocolAdapterAddress",  // Address of the protocol adapter
-  "0xCompoundCometAddress",    // Address of the Comet contract
-  migrationData,               // Encoded migration data
-  ethers.utils.parseEther("10") // Flash loan amount
+    "0xProtocolAdapterAddress",
+    "0xCompoundCometAddress",
+    migrationData,
+    // flash loan amount with % of stock
+    ethers.utils.parseUnits("10500", 6)
 );
 ```
+
+### **Example 2: No Swap Required**
+
+For cases where no swap is required, provide empty paths:
+
+```javascript
+const migrationData = ethers.utils.defaultAbiCoder.encode(
+    [
+        "tuple(tuple(address aDebtToken, uint256 amount)[] borrows, tuple(address aToken, uint256 amount)[] collateral, tuple(bytes pathOfSwapFlashloan, uint256 amountInMaximum, bytes pathSwapCollateral, uint256 amountOutMinimum)[] swaps)"
+    ],
+    [
+        [
+            {
+                aDebtToken: "0xDebtTokenAddress",
+                amount: ethers.utils.parseUnits("100", 6)
+            }
+        ],
+        [
+            {
+                aToken: "0xCollateralTokenAddress",
+                amount: ethers.utils.parseUnits("1", 18)
+            }
+        ],
+        [
+            {
+                pathOfSwapFlashloan: "0x",
+                amountInMaximum: 0,
+                pathSwapCollateral: "0x",
+                amountOutMinimum: 0
+            }
+        ]
+    ]
+);
+
+await migrator.migrate(
+    "0xProtocolAdapterAddress",
+    "0xCompoundCometAddress",
+    migrationData,
+    ethers.utils.parseUnits("105", 6)
+);
+```
+
+### **Example 3: Token Wrapping (e.g., ETH <-> WETH)**
+
+Specify wrapping/unwrapping logic as required by the frontend:
+
+```javascript
+const migrationData = ethers.utils.defaultAbiCoder.encode(
+    [
+        "tuple(tuple(address aDebtToken, uint256 amount)[] borrows, tuple(address aToken, uint256 amount)[] collateral, tuple(bytes pathOfSwapFlashloan, uint256 amountInMaximum, bytes pathSwapCollateral, uint256 amountOutMinimum)[] swaps)"
+    ],
+    [
+        [
+            {
+                aDebtToken: "0xDebtTokenAddress",
+                amount: ethers.utils.parseUnits("100", 6)
+            }
+        ],
+        [
+            {
+                aToken: "0xWrappedTokenAddress",
+                amount: ethers.utils.parseUnits("1", 18)
+            }
+        ],
+        [
+            {
+                pathOfSwapFlashloan: "0x",
+                amountInMaximum: 0,
+                // Wrapping Path (ETH, WETH9)
+                pathSwapCollateral: "0xEncodedWrappingPath",
+                amountOutMinimum: 0
+            }
+        ]
+    ]
+);
+
+await migrator.migrate(
+    "0xProtocolAdapterAddress",
+    "0xCompoundCometAddress",
+    migrationData,
+    ethers.utils.parseUnits("105", 6)
+);
+```
+
+---
+
+## 🛠️ Pre-Migration Requirements
+
+1. **Approve Collateral Handling**:
+   Ensure that the MigratorV2 contract has the necessary permissions to handle collateral tokens. Use the following commands:
+
+    ```javascript
+    await aWbtcToken.approve(migrator.address, ethers.utils.parseUnits("0.1", 8));
+    await cUSDCv3Contract.allow(migrator.address, true);
+    ```
+
+2. **Frontend Responsibilities**:
+    - Provide all required amounts, swap paths, and addresses.
+    - Handle approvals for collateral and debt tokens.
 
 ---
 

@@ -11,7 +11,7 @@ interface IERC20Burnable {
     function burn(address account, uint256 amount) external;
 }
 
-contract MockAaveLendingPool {
+contract MockAavePool {
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
     IERC20 public aToken;
     IERC20 public aDebtToken;

@@ -18,8 +18,8 @@ const args = {
     dai: "0x",
     usdc: "0x",
     wrappedNativeToken: "0x",
-    aavePool: "0x",
-    aaveDataProvider: "0x"
+    sparkPool: "0x",
+    sparkDataProvider: "0x"
 };
 
 async function deploy() {
@@ -39,8 +39,8 @@ async function deploy() {
         config.dai,
         config.usdc,
         config.wrappedNativeToken,
-        config.aavePool,
-        config.aaveDataProvider
+        config.sparkPool,
+        config.sparkDataProvider
     );
     const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
@@ -63,8 +63,8 @@ async function deploy() {
         config.dai,
         config.usdc,
         config.wrappedNativeToken,
-        config.aavePool,
-        config.aaveDataProvider
+        config.sparkPool,
+        config.sparkDataProvider
     ]);
     console.log("\nDone.");
 }

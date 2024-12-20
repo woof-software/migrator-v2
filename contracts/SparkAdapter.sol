@@ -4,82 +4,82 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BaseAdapter} from "./BaseAdapter.sol";
 import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
-import {IAavePool} from "./interfaces/aave/IAavePool.sol";
-import {IAavePoolDataProvider} from "./interfaces/aave/IAavePoolDataProvider.sol";
-import {IADebtToken} from "./interfaces/aave/IADebtToken.sol";
-import {IAToken} from "./interfaces/aave/IAToken.sol";
+import {ISparkPool} from "./interfaces/spark/ISparkPool.sol";
+import {ISparkPoolDataProvider} from "./interfaces/spark/ISparkPoolDataProvider.sol";
+import {ISpDebtToken} from "./interfaces/spark/ISpDebtToken.sol";
+import {ISpToken} from "./interfaces/spark/ISpToken.sol";
 import {IComet} from "./interfaces/IComet.sol";
 import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 
-/// @title AaveV3Adapter
-/// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
-contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
+/// @title SparkAdapter
+/// @notice Adapter contract to migrate positions from Spark to Compound III (Comet)
+contract SparkAdapter is BaseAdapter, IProtocolAdapter {
     /// --------Custom Types-------- ///
 
     /**
-     * @notice Structure representing the user's position in Aave V3
+     * @notice Structure representing the user's position in Spark
      * @dev borrows Array of borrow positions to repay
      * @dev collateral Array of collateral positions to migrate
      * @dev swaps Array of swap parameters corresponding to each borrow
      */
-    struct AaveV3Position {
-        AaveV3Borrow[] borrows;
-        AaveV3Collateral[] collateral;
+    struct SparkPosition {
+        SparkBorrow[] borrows;
+        SparkCollateral[] collateral;
         Swap[] swaps;
     }
 
     /**
-     * @notice Structure representing an individual borrow position in Aave V3
-     * @dev aDebtToken Address of the Aave V3 variable debt token
+     * @notice Structure representing an individual borrow position in Spark
+     * @dev spDebtToken Address of the Spark variable debt token
      * @dev amount Amount of debt to repay; use `type(uint256).max` to repay all
      */
-    struct AaveV3Borrow {
-        address aDebtToken;
+    struct SparkBorrow {
+        address spDebtToken;
         uint256 amount;
     }
 
     /**
-     * @notice Structure representing an individual collateral position in Aave V3
-     * @dev aToken Address of the Aave V3 aToken (collateral token)
+     * @notice Structure representing an individual collateral position in Spark
+     * @dev spToken Address of the Spark spToken (collateral token)
      * @dev amount Amount of collateral to migrate; use `type(uint256).max` to migrate all
      */
-    struct AaveV3Collateral {
-        address aToken;
+    struct SparkCollateral {
+        address spToken;
         uint256 amount;
     }
 
     /// --------Constants-------- ///
 
-    /// @notice Interest rate mode for variable-rate borrowings in Aave V3 (2 represents variable rate)
+    /// @notice Interest rate mode for variable-rate borrowings in Spark (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
 
     /**
-     * @notice Aave V3 Lending Pool contract address
+     * @notice Spark Lending Pool contract address
      */
-    IAavePool public immutable LENDING_POOL;
+    ISparkPool public immutable LENDING_POOL;
 
     /**
-     * @notice Aave V3 Data Provider contract address
+     * @notice Spark Data Provider contract address
      */
-    IAavePoolDataProvider public immutable DATA_PROVIDER;
+    ISparkPoolDataProvider public immutable DATA_PROVIDER;
 
     /// --------Errors-------- ///
 
     /**
      * @dev Reverts if the debt for a specific token has not been successfully cleared
      */
-    error DebtNotCleared(address aToken);
+    error DebtNotCleared(address spToken);
 
     /// --------Constructor-------- ///
 
     /**
-     * @notice Initializes the AaveV3Adapter contract
+     * @notice Initializes the SparkAdapter contract
      * @param _uniswapRouter Address of the Uniswap V3 SwapRouter contract
      * @param _daiUsdsConverter Address of the DAI to USDS converter contract
      * @param _dai Address of the DAI token
      * @param _usds Address of the USDS token
      * @param _wrappedNativeToken Address of the wrapped native token (e.g., WETH)
-     * @param _aaveLendingPool Address of the Aave V3 Lending Pool contract
+     * @param _sparkLendingPool Address of the Spark Lending Pool contract
      */
     constructor(
         address _uniswapRouter,
@@ -87,26 +87,26 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         address _dai,
         address _usds,
         address _wrappedNativeToken,
-        address _aaveLendingPool,
-        address _aaveDataProvider
+        address _sparkLendingPool,
+        address _sparkDataProvider
     ) BaseAdapter(_uniswapRouter, _daiUsdsConverter, _dai, _usds, _wrappedNativeToken) {
-        if (_aaveLendingPool == address(0)) revert InvalidZeroAddress();
-        LENDING_POOL = IAavePool(_aaveLendingPool);
-        DATA_PROVIDER = IAavePoolDataProvider(_aaveDataProvider);
+        if (_sparkLendingPool == address(0)) revert InvalidZeroAddress();
+        LENDING_POOL = ISparkPool(_sparkLendingPool);
+        DATA_PROVIDER = ISparkPoolDataProvider(_sparkDataProvider);
     }
 
     /// --------Functions-------- ///
 
     /**
-     * @notice Executes the migration of a user's Aave V3 position to Compound III
+     * @notice Executes the migration of a user's Spark position to Compound III
      * @dev This function decodes the migration data and processes borrows and collateral
      * @param user Address of the user whose position is being migrated
      * @param comet Address of the Compound III (Comet) contract
-     * @param migrationData Encoded data containing the user's Aave V3 position details
+     * @param migrationData Encoded data containing the user's Spark position details
      */
     function executeMigration(address user, address comet, bytes calldata migrationData) external override {
-        // Decode the migration data into an AaveV3Position struct
-        AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
+        // Decode the migration data into an SparkPosition struct
+        SparkPosition memory position = abi.decode(migrationData, (SparkPosition));
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
@@ -120,16 +120,16 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
     }
 
     /**
-     * @notice Repays a borrow position for the user on Aave V3
+     * @notice Repays a borrow position for the user on Spark
      * @dev May perform a swap to obtain the necessary tokens for repayment
      * @param user Address of the user whose borrow is being repaid
      * @param borrow The borrow position details
      * @param swap Swap parameters to obtain the repayment tokens, if needed
      */
-    function repayBorrow(address user, AaveV3Borrow memory borrow, Swap memory swap) internal {
+    function repayBorrow(address user, SparkBorrow memory borrow, Swap memory swap) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
-            ? IERC20(borrow.aDebtToken).balanceOf(user)
+            ? IERC20(borrow.spDebtToken).balanceOf(user)
             : borrow.amount;
 
         // If a swap is required to obtain the repayment tokens
@@ -155,20 +155,17 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         }
 
         // Get the underlying asset address of the debt token
-        address underlyingAsset = IADebtToken(borrow.aDebtToken).UNDERLYING_ASSET_ADDRESS();
+        address underlyingAsset = ISpDebtToken(borrow.spDebtToken).UNDERLYING_ASSET_ADDRESS();
 
-        // Approve the Aave Lending Pool to spend the repayment amount
-        IADebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
+        // Approve the Spark Lending Pool to spend the repayment amount
+        ISpDebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
-
-        // Check if the debt for the collateral token has been successfully cleared
-        if (!_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.aDebtToken);
     }
 
     /**
-     * @notice Migrates a user's collateral position from Aave V3 to Compound III
+     * @notice Migrates a user's collateral position from Spark to Compound III
      * @dev May perform a swap to obtain the migration tokens
      * @param user Address of the user whose collateral is being migrated
      * @param comet Address of the Compound III (Comet) contract
@@ -178,35 +175,37 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
     function migrateCollateral(
         address user,
         address comet,
-        AaveV3Collateral memory collateral,
+        SparkCollateral memory collateral,
         Swap memory swap
     ) internal {
+        // Check if the debt for the collateral token has been successfully cleared
+        if (!_isDebtCleared(user, collateral.spToken)) revert DebtNotCleared(collateral.spToken);
         // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
-        uint256 aTokenAmount = collateral.amount == type(uint256).max
-            ? IAToken(collateral.aToken).balanceOf(user)
+        uint256 spTokenAmount = collateral.amount == type(uint256).max
+            ? ISpToken(collateral.spToken).balanceOf(user)
             : collateral.amount;
         // Transfer the collateral tokens from the user to this contract
-        IAToken(collateral.aToken).transferFrom(user, address(this), aTokenAmount);
+        ISpToken(collateral.spToken).transferFrom(user, address(this), spTokenAmount);
         // Get the underlying asset address of the collateral token
-        address underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
-        // Withdraw the collateral from Aave V3
-        LENDING_POOL.withdraw(underlyingAsset, aTokenAmount, address(this));
+        address underlyingAsset = ISpToken(collateral.spToken).UNDERLYING_ASSET_ADDRESS();
+        // Withdraw the collateral from Spark
+        LENDING_POOL.withdraw(underlyingAsset, spTokenAmount, address(this));
         // If a swap is required to obtain the migration tokens
         if (swap.pathSwapCollateral.length > 0) {
             address tokenIn = _decodeTokenIn(swap.pathSwapCollateral);
             address tokenOut = _decodeTokenOut(swap.pathSwapCollateral);
             // If the swap is from DAI to USDS, convert DAI to USDS
             if (tokenIn == BaseAdapter.DAI && tokenOut == BaseAdapter.USDS) {
-                _convertDaiToUsds(aTokenAmount);
-                IERC20(BaseAdapter.USDS).approve(comet, aTokenAmount);
-                IComet(comet).supplyTo(user, BaseAdapter.USDS, aTokenAmount);
+                _convertDaiToUsds(spTokenAmount);
+                IERC20(BaseAdapter.USDS).approve(comet, spTokenAmount);
+                IComet(comet).supplyTo(user, BaseAdapter.USDS, spTokenAmount);
                 return;
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
                     ISwapRouter.ExactInputParams({
                         path: swap.pathSwapCollateral,
                         recipient: address(this),
-                        amountIn: aTokenAmount,
+                        amountIn: spTokenAmount,
                         amountOutMinimum: swap.amountOutMinimum,
                         deadline: block.timestamp
                     })
@@ -217,14 +216,14 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
             }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
         } else if (underlyingAsset == BaseAdapter.NATIVE_TOKEN) {
-            uint256 wrappedAmount = _wrapNativeToken(aTokenAmount);
+            uint256 wrappedAmount = _wrapNativeToken(spTokenAmount);
             BaseAdapter.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
             IComet(comet).supplyTo(user, address(BaseAdapter.WRAPPED_NATIVE_TOKEN), wrappedAmount);
             return;
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(underlyingAsset).approve(comet, aTokenAmount);
-            IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
+            IERC20(underlyingAsset).approve(comet, spTokenAmount);
+            IComet(comet).supplyTo(user, underlyingAsset, spTokenAmount);
         }
     }
 

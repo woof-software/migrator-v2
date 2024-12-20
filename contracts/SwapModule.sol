@@ -95,6 +95,9 @@ abstract contract SwapModule is ReentrancyGuard {
         if (params.amountOut == 0) revert ZeroAmountOut();
         if (params.path.length == 0) revert EmptySwapPath();
 
+        _approveTokenForSwap(IERC20NonStandard(_decodeTokenIn(params.path)), type(uint256).max);
+        _approveTokenForSwap(IERC20NonStandard(_decodeTokenOut(params.path)), type(uint256).max);
+
         // Perform the swap
         amountIn = UNISWAP_ROUTER.exactOutput(params);
     }
@@ -112,6 +115,9 @@ abstract contract SwapModule is ReentrancyGuard {
     ) internal nonReentrant returns (uint256 amountOut) {
         if (params.amountIn == 0) revert ZeroAmountIn();
         if (params.path.length == 0) revert EmptySwapPath();
+
+        _approveTokenForSwap(IERC20NonStandard(_decodeTokenIn(params.path)), type(uint256).max);
+        _approveTokenForSwap(IERC20NonStandard(_decodeTokenOut(params.path)), type(uint256).max);
 
         // Perform the swap
         amountOut = UNISWAP_ROUTER.exactInput(params);

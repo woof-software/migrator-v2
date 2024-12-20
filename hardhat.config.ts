@@ -5,19 +5,25 @@ import { HardhatUserConfig } from "hardhat/config";
 // Official plugins.
 /*
  * The toolbox (`@nomicfoundation/hardhat-toolbox`) contains:
- *  - @nomicfoundation/hardhat-network-helpers;
- *  - @nomicfoundation/hardhat-chai-matchers;
- *  - @nomiclabs/hardhat-ethers;
- *  - @nomiclabs/hardhat-etherscan;
- *  - chai;
- *  - ethers;
- *  - hardhat-gas-reporter;
- *  - solidity-coverage;
- *  - @typechain/hardhat;
- *  - typechain;
- *  - @typechain/ethers-v5;
- *  - @ethersproject/abi;
- *  - @ethersproject/providers.
+ * - "@ethersproject/abi";
+ * - "@ethersproject/providers";
+ * - "@nomicfoundation/hardhat-network-helpers";
+ * - "@nomicfoundation/hardhat-chai-matchers";
+ * - "@nomiclabs/hardhat-ethers";
+ * - "@nomiclabs/hardhat-etherscan";
+ * - "@types/chai";
+ * - "@types/mocha";
+ * - "@types/node";
+ * - "@typechain/ethers-v5";
+ * - "@typechain/hardhat";
+ * - "chai";
+ * - "ethers";
+ * - "hardhat";
+ * - "hardhat-gas-reporter";
+ * - "solidity-coverage";
+ * - "ts-node";
+ * - "typechain";
+ * - "typescript";
  *
  * This is no need to install or import them.
  *
@@ -82,14 +88,14 @@ const config: HardhatUserConfig = {
                 }
             },
             {
-              version: "0.8.16",
-              settings: {
-                  optimizer: {
-                      enabled: ENABLED_OPTIMIZER,
-                      runs: OPTIMIZER_RUNS
-                  }
-              }
-          }
+                version: "0.8.16",
+                settings: {
+                    optimizer: {
+                        enabled: ENABLED_OPTIMIZER,
+                        runs: OPTIMIZER_RUNS
+                    }
+                }
+            }
         ]
     },
     defaultNetwork: "hardhat",
@@ -104,7 +110,7 @@ const config: HardhatUserConfig = {
             },
             forking: {
                 url: process.env.FORKING_URL || "",
-                enabled: false
+                enabled: !!process.env.FORKING || false // `!!` to convert to boolean.
             } //,
             /*
              * Uncomment the line below if Ethers reports the error

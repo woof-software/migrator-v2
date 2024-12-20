@@ -11,11 +11,7 @@ contract MockAToken is ERC20 {
      * @param symbol_ The ERC20 symbol of the aToken
      * @param underlying_ The address of the underlying asset for this aToken
      */
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        address underlying_
-    ) ERC20(name_, symbol_) {
+    constructor(string memory name_, string memory symbol_, address underlying_) ERC20(name_, symbol_) {
         require(underlying_ != address(0), "Invalid underlying asset address");
         UNDERLYING_ASSET_ADDRESS = underlying_;
     }
