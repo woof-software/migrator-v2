@@ -237,28 +237,30 @@ describe("MigratorV2AndAaveV3", function () {
         const [_, owner, user, adapterDeployer] = await ethers.getSigners();
         // Deploy AaveV3Adapter
         const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", adapterDeployer);
-        const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy(
-            mocks.mockSwapRouter.address,
-            mocks.mockDaiUsds.address,
-            mocks.mockDAI.address,
-            mocks.mockUSDS.address,
-            mocks.mockWETH9.address,
-            mocks.mockAavePool.address,
-            mocks.mockAavePool.address
-        )) as AaveV3Adapter;
+        const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
+            uniswapRouter: mocks.mockSwapRouter.address,
+            daiUsdsConverter: mocks.mockDaiUsds.address,
+            dai: mocks.mockDAI.address,
+            usds: mocks.mockUSDS.address,
+            wrappedNativeToken: mocks.mockWETH9.address,
+            aaveLendingPool: mocks.mockAavePool.address,
+            aaveDataProvider: mocks.mockAavePool.address,
+            isFullMigration: true
+        })) as AaveV3Adapter;
         await aaveV3Adapter.deployed();
 
         // Deploy SparkAdapter
         const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", adapterDeployer);
-        const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy(
-            mocks.mockSwapRouter.address,
-            mocks.mockDaiUsds.address,
-            mocks.mockDAI.address,
-            mocks.mockUSDS.address,
-            mocks.mockWETH9.address,
-            mocks.mockSparkPool.address,
-            mocks.mockSparkPool.address
-        )) as SparkAdapter;
+        const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy({
+            uniswapRouter: mocks.mockSwapRouter.address,
+            daiUsdsConverter: mocks.mockDaiUsds.address,
+            dai: mocks.mockDAI.address,
+            usds: mocks.mockUSDS.address,
+            wrappedNativeToken: mocks.mockWETH9.address,
+            sparkLendingPool: mocks.mockSparkPool.address,
+            sparkDataProvider: mocks.mockSparkPool.address,
+            isFullMigration: true
+        })) as SparkAdapter;
 
         await sparkAdapter.deployed();
 

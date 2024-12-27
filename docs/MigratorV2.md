@@ -135,10 +135,10 @@ _Reverts if the Comet contract is already configured._
 | ---- | ---- | ----------- |
 | comet | address | Address of the Comet contract that is already configured. |
 
-### AdapterExecuted
+### MigrationExecuted
 
 ```solidity
-event AdapterExecuted(address adapter, address user, uint256 flashAmount, uint256 flashAmountWithFee)
+event MigrationExecuted(address adapter, address user, address comet, uint256 flashAmount, uint256 flashFee)
 ```
 
 Emitted when an adapter executes a migration.
@@ -149,8 +149,67 @@ Emitted when an adapter executes a migration.
 | ---- | ---- | ----------- |
 | adapter | address | Address of the protocol adapter used for migration. |
 | user | address | Address of the user initiating the migration. |
+| comet | address | Address of the Comet contract associated with the migration. |
 | flashAmount | uint256 | Amount borrowed in the flash loan. |
-| flashAmountWithFee | uint256 | Total amount repaid to the Uniswap pool (borrowed amount + fee). |
+| flashFee | uint256 | Fee paid for the flash loan. |
+
+### AdapterAllowed
+
+```solidity
+event AdapterAllowed(address adapter)
+```
+
+Emitted when a protocol adapter is registered.
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| adapter | address | Address of the protocol adapter that was registered. |
+
+### AdapterRemoved
+
+```solidity
+event AdapterRemoved(address adapter)
+```
+
+Emitted when a protocol adapter is removed.
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| adapter | address | Address of the protocol adapter that was removed. |
+
+### FlashDataConfigured
+
+```solidity
+event FlashDataConfigured(address comet, address liquidityPool, address baseToken)
+```
+
+Emitted when flash loan data is configured for a Comet contract.
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| comet | address | Address of the Comet contract. |
+| liquidityPool | address | Address of the Uniswap V3 pool used for the flash loan. |
+| baseToken | address | Address of the token involved in the flash loan. |
+
+### FlashDataRemoved
+
+```solidity
+event FlashDataRemoved(address comet)
+```
+
+Emitted when flash loan data is removed for a Comet contract.
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| comet | address | Address of the Comet contract. |
 
 ### validAdapter
 
@@ -206,9 +265,9 @@ Reverts with:
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | multisig | address | Address of the multisig wallet for contract ownership. |
-| adapters | address[] | Array of protocol adapter addresses to register. |
-| comets | address[] | Array of Comet contract addresses to support. |
-| flashData | struct MigratorV2.FlashData[] | Array of flash loan configurations corresponding to each Comet contract. |
+| adapters | address[] | (Optional) Array of protocol adapter addresses to register. |
+| comets | address[] | (Optional) Array of Comet contract addresses to support. |
+| flashData | struct MigratorV2.FlashData[] | (Optional) Array of flash loan configurations corresponding to each Comet contract. |
 
 ### receive
 

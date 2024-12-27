@@ -6,15 +6,22 @@ Provides advanced swap functionality using Uniswap V3, with slippage checking an
 
 _Designed as an abstract contract for adapters to inherit._
 
-### Swap
+### SwapInputLimitParams
 
 --------Structs-------- ///
 
 ```solidity
-struct Swap {
-  bytes pathOfSwapFlashloan;
+struct SwapInputLimitParams {
+  bytes path;
   uint256 amountInMaximum;
-  bytes pathSwapCollateral;
+}
+```
+
+### SwapOutputLimitParams
+
+```solidity
+struct SwapOutputLimitParams {
+  bytes path;
   uint256 amountOutMinimum;
 }
 ```
@@ -38,14 +45,6 @@ contract ISwapRouter UNISWAP_ROUTER
 The address of the Uniswap V3 Router contract.
 
 _This is immutable and set during contract deployment._
-
-### InvalidZeroAddress
-
-```solidity
-error InvalidZeroAddress()
-```
-
-_Reverts if an address provided is zero._
 
 ### SwapFailed
 
@@ -183,17 +182,32 @@ _Reverts with {InvalidSlippageBps} if the provided `slippageBps` exceeds the max
 ### _approveTokenForSwap
 
 ```solidity
-function _approveTokenForSwap(contract IERC20NonStandard token, uint256 amount) internal
+function _approveTokenForSwap(contract IERC20NonStandard token) internal
 ```
 
-Approves a token for the Uniswap router.
+Approves the Uniswap router to spend an infinite amount of a token.
+Approves the Uniswap router maximum allowance to spend a token.
 
 #### Parameters
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| token | contract IERC20NonStandard | The token to approve. |
-| amount | uint256 | The amount of tokens to approve. |
+| token | contract IERC20NonStandard | The token to approve for spending. |
+
+### _clearApprove
+
+```solidity
+function _clearApprove(contract IERC20NonStandard token) internal
+```
+
+Clears the approval of a token for the Uniswap router.
+Clears the approval of a token for the Uniswap router.
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| token | contract IERC20NonStandard | The token to clear approval for. |
 
 ### _decodeTokenIn
 

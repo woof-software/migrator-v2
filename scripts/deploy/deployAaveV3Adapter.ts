@@ -33,15 +33,15 @@ async function deploy() {
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    const contract = await Contract.connect(deployer).deploy(
-        config.uniswapRouter,
-        config.daiUsdsConverter,
-        config.dai,
-        config.usdc,
-        config.wrappedNativeToken,
-        config.aavePool,
-        config.aaveDataProvider
-    );
+    const contract = await Contract.connect(deployer).deploy({
+        uniswapRouter: config.uniswapRouter,
+        daiUsdsConverter: config.daiUsdsConverter,
+        dai: config.dai,
+        usds: config.usdc,
+        wrappedNativeToken: config.wrappedNativeToken,
+        aaveLendingPool: config.aavePool,
+        aaveDataProvider: config.aaveDataProvider
+    });
     const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
     console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);

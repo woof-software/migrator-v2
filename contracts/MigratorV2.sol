@@ -10,14 +10,12 @@ import {IUniswapV3Pool} from "./interfaces/@uniswap/v3-core/IUniswapV3Pool.sol";
 import {IComet} from "./interfaces/IComet.sol";
 import {IERC20NonStandard} from "./interfaces/IERC20NonStandard.sol";
 
-import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
-
 /**
  * @title MigratorV2
  * @notice This contract facilitates migration of user positions between protocols using flash loans from Uniswap V3.
  * @dev The contract interacts with Uniswap V3 for flash loans and uses protocol adapters to execute migrations.
  */
-contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausable, ERC165 {
+contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausable {
     /// --------Types-------- ///
 
     /**

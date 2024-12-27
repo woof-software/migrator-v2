@@ -2,30 +2,52 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {BaseAdapter} from "./BaseAdapter.sol";
-import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
-import {IAavePool} from "./interfaces/aave/IAavePool.sol";
-import {IAavePoolDataProvider} from "./interfaces/aave/IAavePoolDataProvider.sol";
-import {IADebtToken} from "./interfaces/aave/IADebtToken.sol";
-import {IAToken} from "./interfaces/aave/IAToken.sol";
-import {IComet} from "./interfaces/IComet.sol";
-import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {IProtocolAdapter} from "../../../interfaces/IProtocolAdapter.sol";
+import {IAavePool} from "../../../interfaces/aave/IAavePool.sol";
+import {IAavePoolDataProvider} from "../../../interfaces/aave/IAavePoolDataProvider.sol";
+import {IADebtToken} from "../../../interfaces/aave/IADebtToken.sol";
+import {IAToken} from "../../../interfaces/aave/IAToken.sol";
+import {IComet} from "../../../interfaces/IComet.sol";
+import {ISwapRouter} from "../../../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {SwapModule} from "../../../modules/SwapModule.sol";
+import {WrapModule} from "../../../modules/WrapModule.sol";
+import {ConvertModule} from "../../../modules/ConvertModule.sol";
 
 /// @title AaveV3Adapter
 /// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
-contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
+contract AaveV3Adapter is IProtocolAdapter, SwapModule, WrapModule, ConvertModule {
     /// --------Custom Types-------- ///
+
+    /**
+     * @notice Initializes the AaveV3Adapter contract
+     * @param uniswapRouter Address of the Uniswap V3 SwapRouter contract
+     * @param daiUsdsConverter Address of the DAI to USDS converter contract
+     * @param dai Address of the DAI token
+     * @param usds Address of the USDS token
+     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH)
+     * @param aaveLendingPool Address of the Aave V3 Lending Pool contract
+     * @param aaveDataProvider Address of the Aave V3 Data Provider contract
+     * @param isFullMigration Boolean indicating whether the migration is a full migration
+     */
+    struct DeploymentParams {
+        address uniswapRouter;
+        address daiUsdsConverter;
+        address dai;
+        address usds;
+        address wrappedNativeToken;
+        address aaveLendingPool;
+        address aaveDataProvider;
+        bool isFullMigration;
+    }
 
     /**
      * @notice Structure representing the user's position in Aave V3
      * @dev borrows Array of borrow positions to repay
      * @dev collateral Array of collateral positions to migrate
-     * @dev swaps Array of swap parameters corresponding to each borrow
      */
     struct AaveV3Position {
         AaveV3Borrow[] borrows;
-        AaveV3Collateral[] collateral;
-        Swap[] swaps;
+        AaveV3Collateral[] collaterals;
     }
 
     /**
@@ -36,6 +58,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
     struct AaveV3Borrow {
         address aDebtToken;
         uint256 amount;
+        SwapInputLimitParams swapParams;
     }
 
     /**
@@ -46,6 +69,7 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
     struct AaveV3Collateral {
         address aToken;
         uint256 amount;
+        SwapOutputLimitParams swapParams;
     }
 
     /// --------Constants-------- ///
@@ -53,6 +77,8 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
     /// @notice Interest rate mode for variable-rate borrowings in Aave V3 (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
 
+    /// @notice Boolean indicating whether the migration is a full migration
+    bool public immutable IS_FULL_MIGRATION;
     /**
      * @notice Aave V3 Lending Pool contract address
      */
@@ -74,25 +100,27 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
 
     /**
      * @notice Initializes the AaveV3Adapter contract
-     * @param _uniswapRouter Address of the Uniswap V3 SwapRouter contract
-     * @param _daiUsdsConverter Address of the DAI to USDS converter contract
-     * @param _dai Address of the DAI token
-     * @param _usds Address of the USDS token
-     * @param _wrappedNativeToken Address of the wrapped native token (e.g., WETH)
-     * @param _aaveLendingPool Address of the Aave V3 Lending Pool contract
+     * @param deploymentParams Struct containing the deployment parameters:
+     * - uniswapRouter Address of the Uniswap V3 SwapRouter contract
+     * - daiUsdsConverter Address of the DAI to USDS converter contract
+     * - dai Address of the DAI token
+     * - usds Address of the USDS token
+     * - wrappedNativeToken Address of the wrapped native token (e.g., WETH)
+     * - aaveLendingPool Address of the Aave V3 Lending Pool contract
+     * - aaveDataProvider Address of the Aave V3 Data Provider contract
+     * @dev Reverts if any of the provided addresses are zero
      */
     constructor(
-        address _uniswapRouter,
-        address _daiUsdsConverter,
-        address _dai,
-        address _usds,
-        address _wrappedNativeToken,
-        address _aaveLendingPool,
-        address _aaveDataProvider
-    ) BaseAdapter(_uniswapRouter, _daiUsdsConverter, _dai, _usds, _wrappedNativeToken) {
-        if (_aaveLendingPool == address(0)) revert InvalidZeroAddress();
-        LENDING_POOL = IAavePool(_aaveLendingPool);
-        DATA_PROVIDER = IAavePoolDataProvider(_aaveDataProvider);
+        DeploymentParams memory deploymentParams
+    )
+        SwapModule(deploymentParams.uniswapRouter)
+        ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
+        WrapModule(deploymentParams.wrappedNativeToken)
+    {
+        if (deploymentParams.aaveLendingPool == address(0)) revert InvalidZeroAddress();
+        LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
+        DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
+        IS_FULL_MIGRATION = deploymentParams.isFullMigration;
     }
 
     /// --------Functions-------- ///
@@ -110,12 +138,12 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
-            repayBorrow(user, position.borrows[i], position.swaps[i]);
+            repayBorrow(user, position.borrows[i]);
         }
 
         // Migrate each collateral position
-        for (uint256 i = 0; i < position.collateral.length; i++) {
-            migrateCollateral(user, comet, position.collateral[i], position.swaps[i]);
+        for (uint256 i = 0; i < position.collaterals.length; i++) {
+            migrateCollateral(user, comet, position.collaterals[i]);
         }
     }
 
@@ -124,30 +152,29 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
      * @dev May perform a swap to obtain the necessary tokens for repayment
      * @param user Address of the user whose borrow is being repaid
      * @param borrow The borrow position details
-     * @param swap Swap parameters to obtain the repayment tokens, if needed
      */
-    function repayBorrow(address user, AaveV3Borrow memory borrow, Swap memory swap) internal {
+    function repayBorrow(address user, AaveV3Borrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
             ? IERC20(borrow.aDebtToken).balanceOf(user)
             : borrow.amount;
 
         // If a swap is required to obtain the repayment tokens
-        if (swap.pathOfSwapFlashloan.length > 0) {
-            address tokenIn = _decodeTokenIn(swap.pathOfSwapFlashloan);
-            address tokenOut = _decodeTokenOut(swap.pathOfSwapFlashloan);
+        if (borrow.swapParams.path.length > 0) {
+            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
+            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
             // If the swap is from USDS to DAI, convert USDS to DAI
-            if (tokenIn == BaseAdapter.USDS && tokenOut == BaseAdapter.DAI) {
+            if (tokenIn == ConvertModule.USDS && tokenOut == ConvertModule.DAI) {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(repayAmount);
             } else {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
                     ISwapRouter.ExactOutputParams({
-                        path: swap.pathOfSwapFlashloan,
+                        path: borrow.swapParams.path,
                         recipient: address(this),
                         amountOut: repayAmount,
-                        amountInMaximum: swap.amountInMaximum,
+                        amountInMaximum: borrow.swapParams.amountInMaximum,
                         deadline: block.timestamp
                     })
                 );
@@ -159,12 +186,13 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
 
         // Approve the Aave Lending Pool to spend the repayment amount
         IADebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
+        // IADebtToken(underlyingAsset).approve(address(LENDING_POOL), type(uint256).max);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
 
         // Check if the debt for the collateral token has been successfully cleared
-        if (!_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.aDebtToken);
+        if (IS_FULL_MIGRATION && !_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.aDebtToken);
     }
 
     /**
@@ -173,14 +201,8 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
      * @param user Address of the user whose collateral is being migrated
      * @param comet Address of the Compound III (Comet) contract
      * @param collateral The collateral position details
-     * @param swap Swap parameters to obtain the migration tokens, if needed
      */
-    function migrateCollateral(
-        address user,
-        address comet,
-        AaveV3Collateral memory collateral,
-        Swap memory swap
-    ) internal {
+    function migrateCollateral(address user, address comet, AaveV3Collateral memory collateral) internal {
         // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
         uint256 aTokenAmount = collateral.amount == type(uint256).max
             ? IAToken(collateral.aToken).balanceOf(user)
@@ -191,35 +213,37 @@ contract AaveV3Adapter is BaseAdapter, IProtocolAdapter {
         address underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
         // Withdraw the collateral from Aave V3
         LENDING_POOL.withdraw(underlyingAsset, aTokenAmount, address(this));
+
         // If a swap is required to obtain the migration tokens
-        if (swap.pathSwapCollateral.length > 0) {
-            address tokenIn = _decodeTokenIn(swap.pathSwapCollateral);
-            address tokenOut = _decodeTokenOut(swap.pathSwapCollateral);
+        if (collateral.swapParams.path.length > 0) {
+            address tokenIn = _decodeTokenIn(collateral.swapParams.path);
+            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
             // If the swap is from DAI to USDS, convert DAI to USDS
-            if (tokenIn == BaseAdapter.DAI && tokenOut == BaseAdapter.USDS) {
+            if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
                 _convertDaiToUsds(aTokenAmount);
-                IERC20(BaseAdapter.USDS).approve(comet, aTokenAmount);
-                IComet(comet).supplyTo(user, BaseAdapter.USDS, aTokenAmount);
+                IERC20(ConvertModule.USDS).approve(comet, aTokenAmount);
+                IComet(comet).supplyTo(user, ConvertModule.USDS, aTokenAmount);
                 return;
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
                     ISwapRouter.ExactInputParams({
-                        path: swap.pathSwapCollateral,
+                        path: collateral.swapParams.path,
                         recipient: address(this),
                         amountIn: aTokenAmount,
-                        amountOutMinimum: swap.amountOutMinimum,
+                        amountOutMinimum: collateral.swapParams.amountOutMinimum,
                         deadline: block.timestamp
                     })
                 );
                 IERC20(tokenOut).approve(comet, amountOut);
+
                 IComet(comet).supplyTo(user, tokenOut, amountOut);
                 return;
             }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == BaseAdapter.NATIVE_TOKEN) {
+        } else if (underlyingAsset == WrapModule.NATIVE_TOKEN) {
             uint256 wrappedAmount = _wrapNativeToken(aTokenAmount);
-            BaseAdapter.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
-            IComet(comet).supplyTo(user, address(BaseAdapter.WRAPPED_NATIVE_TOKEN), wrappedAmount);
+            WrapModule.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
+            IComet(comet).supplyTo(user, address(WrapModule.WRAPPED_NATIVE_TOKEN), wrappedAmount);
             return;
             // If no swap is required, supply the collateral directly to Comet
         } else {

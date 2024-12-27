@@ -108,15 +108,17 @@ const config: HardhatUserConfig = {
                 // Default value: 20.
                 count: process.env.NUMBER_OF_ACCOUNTS ? +process.env.NUMBER_OF_ACCOUNTS : 20
             },
+            chainId: 1,
             forking: {
                 url: process.env.FORKING_URL || "",
                 enabled: !!process.env.FORKING || false // `!!` to convert to boolean.
+                // blockNumber: 21487073
             } //,
             /*
              * Uncomment the line below if Ethers reports the error
              * "Error: cannot estimate gas; transaction may fail or may require manual gas limit...".
              */
-            // gas: 30000000//,
+            // gas: 30000000,
             // gasPrice: 8000000000
         },
         // The CUSTOM blockchain:
@@ -164,6 +166,11 @@ const config: HardhatUserConfig = {
             chainId: 80002,
             url: process.env.POLYGON_TESTNET_URL || "",
             accounts: [process.env.POLYGON_TESTNET_KEYS || ""]
+        },
+        localhost: {
+            chainId: 1,
+            url: "http://127.0.0.1:8545/"
+            // accounts: [""]
         }
     },
     contractSizer: {

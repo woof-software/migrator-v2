@@ -2,30 +2,52 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {BaseAdapter} from "./BaseAdapter.sol";
-import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
-import {ISparkPool} from "./interfaces/spark/ISparkPool.sol";
-import {ISparkPoolDataProvider} from "./interfaces/spark/ISparkPoolDataProvider.sol";
-import {ISpDebtToken} from "./interfaces/spark/ISpDebtToken.sol";
-import {ISpToken} from "./interfaces/spark/ISpToken.sol";
-import {IComet} from "./interfaces/IComet.sol";
-import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {IProtocolAdapter} from "../../../interfaces/IProtocolAdapter.sol";
+import {ISparkPool} from "../../../interfaces/spark/ISparkPool.sol";
+import {ISparkPoolDataProvider} from "../../../interfaces/spark/ISparkPoolDataProvider.sol";
+import {ISpDebtToken} from "../../../interfaces/spark/ISpDebtToken.sol";
+import {ISpToken} from "../../../interfaces/spark/ISpToken.sol";
+import {IComet} from "../../../interfaces/IComet.sol";
+import {ISwapRouter} from "../../../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {SwapModule} from "../../../modules/SwapModule.sol";
+import {WrapModule} from "../../../modules/WrapModule.sol";
+import {ConvertModule} from "../../../modules/ConvertModule.sol";
 
 /// @title SparkAdapter
 /// @notice Adapter contract to migrate positions from Spark to Compound III (Comet)
-contract SparkAdapter is BaseAdapter, IProtocolAdapter {
+contract SparkAdapter is IProtocolAdapter, SwapModule, WrapModule, ConvertModule {
     /// --------Custom Types-------- ///
+
+    /**
+     * @notice Structure representing the deployment parameters for the SparkAdapter contract
+     * @param uniswapRouter Address of the Uniswap V3 SwapRouter contract
+     * @param daiUsdsConverter Address of the DAI to USDS converter contract
+     * @param dai Address of the DAI token
+     * @param usds Address of the USDS token
+     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH)
+     * @param sparkLendingPool Address of the Spark Lending Pool contract
+     * @param sparkDataProvider Address of the Spark Data Provider contract
+     * @param isFullMigration Boolean indicating whether the migration is full or partial
+     */
+    struct DeploymentParams {
+        address uniswapRouter;
+        address daiUsdsConverter;
+        address dai;
+        address usds;
+        address wrappedNativeToken;
+        address sparkLendingPool;
+        address sparkDataProvider;
+        bool isFullMigration;
+    }
 
     /**
      * @notice Structure representing the user's position in Spark
      * @dev borrows Array of borrow positions to repay
      * @dev collateral Array of collateral positions to migrate
-     * @dev swaps Array of swap parameters corresponding to each borrow
      */
     struct SparkPosition {
         SparkBorrow[] borrows;
         SparkCollateral[] collateral;
-        Swap[] swaps;
     }
 
     /**
@@ -36,6 +58,7 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
     struct SparkBorrow {
         address spDebtToken;
         uint256 amount;
+        SwapInputLimitParams swapParams;
     }
 
     /**
@@ -46,12 +69,16 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
     struct SparkCollateral {
         address spToken;
         uint256 amount;
+        SwapOutputLimitParams swapParams;
     }
 
     /// --------Constants-------- ///
 
     /// @notice Interest rate mode for variable-rate borrowings in Spark (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
+
+    /// @notice Boolean indicating whether the migration is a full migration
+    bool public immutable IS_FULL_MIGRATION;
 
     /**
      * @notice Spark Lending Pool contract address
@@ -74,25 +101,28 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
 
     /**
      * @notice Initializes the SparkAdapter contract
-     * @param _uniswapRouter Address of the Uniswap V3 SwapRouter contract
-     * @param _daiUsdsConverter Address of the DAI to USDS converter contract
-     * @param _dai Address of the DAI token
-     * @param _usds Address of the USDS token
-     * @param _wrappedNativeToken Address of the wrapped native token (e.g., WETH)
-     * @param _sparkLendingPool Address of the Spark Lending Pool contract
+     * @param deploymentParams Deployment parameters for the SparkAdapter contract:
+     * - uniswapRouter Address of the Uniswap V3 SwapRouter contract
+     * - daiUsdsConverter Address of the DAI to USDS converter contract
+     * - dai Address of the DAI token
+     * - usds Address of the USDS token
+     * - wrappedNativeToken Address of the wrapped native token (e.g., WETH)
+     * - sparkLendingPool Address of the Spark Lending Pool contract
+     * - sparkDataProvider Address of the Spark Data Provider contract
+     * - isFullMigration Boolean indicating whether the migration is full or partial
+     * @dev Reverts if any of the provided addresses are zero
      */
     constructor(
-        address _uniswapRouter,
-        address _daiUsdsConverter,
-        address _dai,
-        address _usds,
-        address _wrappedNativeToken,
-        address _sparkLendingPool,
-        address _sparkDataProvider
-    ) BaseAdapter(_uniswapRouter, _daiUsdsConverter, _dai, _usds, _wrappedNativeToken) {
-        if (_sparkLendingPool == address(0)) revert InvalidZeroAddress();
-        LENDING_POOL = ISparkPool(_sparkLendingPool);
-        DATA_PROVIDER = ISparkPoolDataProvider(_sparkDataProvider);
+        DeploymentParams memory deploymentParams
+    )
+        SwapModule(deploymentParams.uniswapRouter)
+        ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
+        WrapModule(deploymentParams.wrappedNativeToken)
+    {
+        if (deploymentParams.sparkLendingPool == address(0)) revert InvalidZeroAddress();
+        LENDING_POOL = ISparkPool(deploymentParams.sparkLendingPool);
+        DATA_PROVIDER = ISparkPoolDataProvider(deploymentParams.sparkDataProvider);
+        IS_FULL_MIGRATION = deploymentParams.isFullMigration;
     }
 
     /// --------Functions-------- ///
@@ -110,12 +140,12 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
-            repayBorrow(user, position.borrows[i], position.swaps[i]);
+            repayBorrow(user, position.borrows[i]);
         }
 
         // Migrate each collateral position
         for (uint256 i = 0; i < position.collateral.length; i++) {
-            migrateCollateral(user, comet, position.collateral[i], position.swaps[i]);
+            migrateCollateral(user, comet, position.collateral[i]);
         }
     }
 
@@ -124,30 +154,29 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
      * @dev May perform a swap to obtain the necessary tokens for repayment
      * @param user Address of the user whose borrow is being repaid
      * @param borrow The borrow position details
-     * @param swap Swap parameters to obtain the repayment tokens, if needed
      */
-    function repayBorrow(address user, SparkBorrow memory borrow, Swap memory swap) internal {
+    function repayBorrow(address user, SparkBorrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
             ? IERC20(borrow.spDebtToken).balanceOf(user)
             : borrow.amount;
 
         // If a swap is required to obtain the repayment tokens
-        if (swap.pathOfSwapFlashloan.length > 0) {
-            address tokenIn = _decodeTokenIn(swap.pathOfSwapFlashloan);
-            address tokenOut = _decodeTokenOut(swap.pathOfSwapFlashloan);
+        if (borrow.swapParams.path.length > 0) {
+            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
+            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
             // If the swap is from USDS to DAI, convert USDS to DAI
-            if (tokenIn == BaseAdapter.USDS && tokenOut == BaseAdapter.DAI) {
+            if (tokenIn == ConvertModule.USDS && tokenOut == ConvertModule.DAI) {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(repayAmount);
             } else {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
                     ISwapRouter.ExactOutputParams({
-                        path: swap.pathOfSwapFlashloan,
+                        path: borrow.swapParams.path,
                         recipient: address(this),
                         amountOut: repayAmount,
-                        amountInMaximum: swap.amountInMaximum,
+                        amountInMaximum: borrow.swapParams.amountInMaximum,
                         deadline: block.timestamp
                     })
                 );
@@ -162,6 +191,9 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
+
+        // Check if the debt for the collateral token has been successfully cleared
+        if (IS_FULL_MIGRATION && !_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.spDebtToken);
     }
 
     /**
@@ -170,16 +202,8 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
      * @param user Address of the user whose collateral is being migrated
      * @param comet Address of the Compound III (Comet) contract
      * @param collateral The collateral position details
-     * @param swap Swap parameters to obtain the migration tokens, if needed
      */
-    function migrateCollateral(
-        address user,
-        address comet,
-        SparkCollateral memory collateral,
-        Swap memory swap
-    ) internal {
-        // Check if the debt for the collateral token has been successfully cleared
-        if (!_isDebtCleared(user, collateral.spToken)) revert DebtNotCleared(collateral.spToken);
+    function migrateCollateral(address user, address comet, SparkCollateral memory collateral) internal {
         // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
         uint256 spTokenAmount = collateral.amount == type(uint256).max
             ? ISpToken(collateral.spToken).balanceOf(user)
@@ -190,23 +214,24 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
         address underlyingAsset = ISpToken(collateral.spToken).UNDERLYING_ASSET_ADDRESS();
         // Withdraw the collateral from Spark
         LENDING_POOL.withdraw(underlyingAsset, spTokenAmount, address(this));
+
         // If a swap is required to obtain the migration tokens
-        if (swap.pathSwapCollateral.length > 0) {
-            address tokenIn = _decodeTokenIn(swap.pathSwapCollateral);
-            address tokenOut = _decodeTokenOut(swap.pathSwapCollateral);
+        if (collateral.swapParams.path.length > 0) {
+            address tokenIn = _decodeTokenIn(collateral.swapParams.path);
+            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
             // If the swap is from DAI to USDS, convert DAI to USDS
-            if (tokenIn == BaseAdapter.DAI && tokenOut == BaseAdapter.USDS) {
+            if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
                 _convertDaiToUsds(spTokenAmount);
-                IERC20(BaseAdapter.USDS).approve(comet, spTokenAmount);
-                IComet(comet).supplyTo(user, BaseAdapter.USDS, spTokenAmount);
+                IERC20(ConvertModule.USDS).approve(comet, spTokenAmount);
+                IComet(comet).supplyTo(user, ConvertModule.USDS, spTokenAmount);
                 return;
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
                     ISwapRouter.ExactInputParams({
-                        path: swap.pathSwapCollateral,
+                        path: collateral.swapParams.path,
                         recipient: address(this),
                         amountIn: spTokenAmount,
-                        amountOutMinimum: swap.amountOutMinimum,
+                        amountOutMinimum: collateral.swapParams.amountOutMinimum,
                         deadline: block.timestamp
                     })
                 );
@@ -215,10 +240,10 @@ contract SparkAdapter is BaseAdapter, IProtocolAdapter {
                 return;
             }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == BaseAdapter.NATIVE_TOKEN) {
+        } else if (underlyingAsset == WrapModule.NATIVE_TOKEN) {
             uint256 wrappedAmount = _wrapNativeToken(spTokenAmount);
-            BaseAdapter.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
-            IComet(comet).supplyTo(user, address(BaseAdapter.WRAPPED_NATIVE_TOKEN), wrappedAmount);
+            WrapModule.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
+            IComet(comet).supplyTo(user, address(WrapModule.WRAPPED_NATIVE_TOKEN), wrappedAmount);
             return;
             // If no swap is required, supply the collateral directly to Comet
         } else {

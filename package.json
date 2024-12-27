@@ -14,7 +14,7 @@
         "test": "npx hardhat test test/unit/*test.ts",
         "test-t": "npx hardhat test --trace",
         "test-ft": "npx hardhat test --fulltrace",
-        "test-f": "FORKING=true npx hardhat test test/fork/*test.ts --trace",
+        "test-f": "FORKING=true npx hardhat test test/fork/*test.ts --fulltrace",
         "test-4g": "NODE_OPTIONS=\"--max-old-space-size=4096\" npm test",
         "gas-report": "REPORT_GAS=true npx hardhat test",
         "size-contracts": "npm run compile-all && npx hardhat size-contracts",
@@ -33,7 +33,7 @@
         "dev:hh-check": "npx hardhat check",
         "dev:node": "npx hardhat node",
         "dev:flatten": "npm run compile-all && npx hardhat flatten",
-        "postinstall": "npm run compile-all && npm run dev:abi && npm run dev:docs",
+        "postinstall": "npm run compile-all && npm run abi && npm run docs",
         "prepare": "npx husky install"
     },
     "dependencies": {

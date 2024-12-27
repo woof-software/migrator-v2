@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ISwapRouter} from "./interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
-import {IERC20NonStandard} from "./interfaces/IERC20NonStandard.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {IERC20NonStandard} from "../interfaces/IERC20NonStandard.sol";
+import {CommonErrors} from "../errors/CommonErrors.sol";
 
 /**
  * @title SwapModule
  * @notice Provides advanced swap functionality using Uniswap V3, with slippage checking and error handling.
  * @dev Designed as an abstract contract for adapters to inherit.
  */
-abstract contract SwapModule is ReentrancyGuard {
+abstract contract SwapModule is ReentrancyGuard, CommonErrors {
     /// --------Structs-------- ///
 
-    struct Swap {
-        bytes pathOfSwapFlashloan;
+    struct SwapInputLimitParams {
+        bytes path;
         uint256 amountInMaximum;
-        bytes pathSwapCollateral;
+    }
+
+    struct SwapOutputLimitParams {
+        bytes path;
         uint256 amountOutMinimum;
     }
 
@@ -35,11 +39,6 @@ abstract contract SwapModule is ReentrancyGuard {
     ISwapRouter public immutable UNISWAP_ROUTER;
 
     /// --------Errors-------- ///
-
-    /**
-     * @dev Reverts if an address provided is zero.
-     */
-    error InvalidZeroAddress();
 
     /**
      * @dev Reverts if a swap operation fails.
@@ -95,11 +94,14 @@ abstract contract SwapModule is ReentrancyGuard {
         if (params.amountOut == 0) revert ZeroAmountOut();
         if (params.path.length == 0) revert EmptySwapPath();
 
-        _approveTokenForSwap(IERC20NonStandard(_decodeTokenIn(params.path)), type(uint256).max);
-        _approveTokenForSwap(IERC20NonStandard(_decodeTokenOut(params.path)), type(uint256).max);
+        address tokenOut = _decodeTokenOut(params.path);
+
+        _approveTokenForSwap(IERC20NonStandard(tokenOut));
 
         // Perform the swap
         amountIn = UNISWAP_ROUTER.exactOutput(params);
+
+        _clearApprove(IERC20NonStandard(tokenOut));
     }
 
     /**
@@ -116,11 +118,14 @@ abstract contract SwapModule is ReentrancyGuard {
         if (params.amountIn == 0) revert ZeroAmountIn();
         if (params.path.length == 0) revert EmptySwapPath();
 
-        _approveTokenForSwap(IERC20NonStandard(_decodeTokenIn(params.path)), type(uint256).max);
-        _approveTokenForSwap(IERC20NonStandard(_decodeTokenOut(params.path)), type(uint256).max);
+        address tokenIn = _decodeTokenIn(params.path);
+
+        _approveTokenForSwap(IERC20NonStandard(tokenIn));
 
         // Perform the swap
         amountOut = UNISWAP_ROUTER.exactInput(params);
+
+        _clearApprove(IERC20NonStandard(tokenIn));
     }
 
     /**
@@ -143,12 +148,21 @@ abstract contract SwapModule is ReentrancyGuard {
     /// --------Internal Helper Functions-------- ///
 
     /**
-     * @notice Approves a token for the Uniswap router.
-     * @param token The token to approve.
-     * @param amount The amount of tokens to approve.
+     * @notice Approves the Uniswap router to spend an infinite amount of a token.
+     * @param token The token to approve for spending.
+     * @notice Approves the Uniswap router maximum allowance to spend a token.
      */
-    function _approveTokenForSwap(IERC20NonStandard token, uint256 amount) internal {
-        token.approve(address(UNISWAP_ROUTER), amount);
+    function _approveTokenForSwap(IERC20NonStandard token) internal {
+        token.approve(address(UNISWAP_ROUTER), type(uint256).max);
+    }
+
+    /**
+     * @notice Clears the approval of a token for the Uniswap router.
+     * @param token The token to clear approval for.
+     * @notice Clears the approval of a token for the Uniswap router.
+     */
+    function _clearApprove(IERC20NonStandard token) internal {
+        token.approve(address(UNISWAP_ROUTER), 0);
     }
 
     /**

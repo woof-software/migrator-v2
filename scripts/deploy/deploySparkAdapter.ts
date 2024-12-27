@@ -7,7 +7,7 @@ import path from "path";
 import { getAddressSaver, verify } from "./utils/helpers";
 const { ethers, network } = hre;
 
-const CONTRACT_NAME = "AaveV3Adapter";
+const CONTRACT_NAME = "SparkAdapter";
 const FILE_NAME = "deploymentAddresses";
 const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 
@@ -33,15 +33,15 @@ async function deploy() {
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    const contract = await Contract.connect(deployer).deploy(
-        config.uniswapRouter,
-        config.daiUsdsConverter,
-        config.dai,
-        config.usdc,
-        config.wrappedNativeToken,
-        config.sparkPool,
-        config.sparkDataProvider
-    );
+    const contract = await Contract.connect(deployer).deploy({
+        uniswapRouter: config.uniswapRouter,
+        daiUsdsConverter: config.daiUsdsConverter,
+        dai: config.dai,
+        usds: config.usdc,
+        wrappedNativeToken: config.wrappedNativeToken,
+        sparkLendingPool: config.sparkPool,
+        sparkDataProvider: config.sparkDataProvider
+    });
     const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
     console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);

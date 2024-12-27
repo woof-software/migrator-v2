@@ -48,7 +48,12 @@ gas-report.txt
 bin
 
 # Docs
-docs/**/
+docs/_*/
+docs/test/
+docs/mocks/
+docs/errors/
+docs/interfaces/
+docs/comet_migrator_v2_v3/
 
 # ABI
 abi
