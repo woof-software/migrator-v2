@@ -13,7 +13,7 @@ import {
 
 import {
     MigratorV2,
-    AaveV3DaiUsdsAdapter,
+    AaveV3UsdsAdapter,
     IAavePoolDataProvider__factory,
     IAavePool__factory,
     ERC20__factory,
@@ -21,74 +21,111 @@ import {
     MockSwapRouter__factory
 } from "../../../../typechain-types";
 
+function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const POSITION_ABI = [
+    "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+];
+
 describe("MigratorV2 with AaveV3", function () {
     async function setupEnv() {
         const [owner, user] = await ethers.getSigners();
 
         const treasuryAddress = "0x000000000000000000000000000000000000dEaD";
-        // token addresses
-        const wbtcTokenAddress = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599";
-        const aWbtcTokenAddress = "0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8";
-        const usdcTokenAddress = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-        const daiTokenAddress = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
-        const aDaiTokenAddress = "0x018008bfb33d285247A21d44E50697654f754e63";
-        const varDebtDaiTokenAddress = "0xcF8d0c70c850859266f5C338b38F9D663181C314";
-        const usdtTokenAddress = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
-        const aUsdtTokenAddress = "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a";
-        const varDebtUsdtTokenAddress = "0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8";
-        const varDebtUsdcTokenAddress = "0x72E95b8931767C79bA4EeE721354d6E99a61D004";
-        const usdsTokenAddress = "0xdC035D45d973E3EC169d2276DDab16f1e407384F";
-        const weth9TokenAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-        // aaave v3 addresses
-        const aaveV3DataProviderAddress = "0x41393e5e337606dc3821075Af65AeE84D7688CBD";
-        const aaveV3PoolAddress = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+
+        const tokenAddresses = {
+            WBTC: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+            USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            DAI: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+            USDT: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+            USDS: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+            WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        };
+
+        const aaveContractAddresses = {
+            aToken: {
+                WBTC: "0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8",
+                DAI: "0x018008bfb33d285247A21d44E50697654f754e63",
+                USDT: "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a"
+            },
+            variableDebtToken: {
+                DAI: "0xcF8d0c70c850859266f5C338b38F9D663181C314",
+                USDT: "0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8",
+                USDC: "0x72E95b8931767C79bA4EeE721354d6E99a61D004"
+            },
+            pool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+            protocolDataProvider: "0x41393e5e337606dc3821075Af65AeE84D7688CBD"
+        };
+
         // convertor Dai to Usds address
         const daiUsdsAddress = "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A";
-        // uniswap router address
-        const uniswapRouterAddress = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
-        const UniswapV3PoolUsdcUsdt = "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6";
-        // comet addresses (cUSDCv3)
-        const cUSDCv3Address = "0xc3d688B66703497DAA19211EEdff47f25384cdc3";
-        // const cUSDCv3ExtAddress = "0x285617313887d43256F852cAE0Ee4de4b68D45B0";
 
-        const wbtcToken = ERC20__factory.connect(wbtcTokenAddress, user);
-        const usdtToken = ERC20__factory.connect(usdtTokenAddress, user);
-        const usdcToken = ERC20__factory.connect(usdcTokenAddress, user);
-        const daiToken = ERC20__factory.connect(daiTokenAddress, user);
-        const usdsToken = ERC20__factory.connect(usdsTokenAddress, user);
+        const uniswapContractAddresses = {
+            router: "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            pools: {
+                USDC_USDT: "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6"
+            }
+        };
+
+        const compoundContractAddresses = {
+            markets: {
+                cUSDCv3: "0xc3d688B66703497DAA19211EEdff47f25384cdc3"
+            }
+        };
+
+        const tokenContracts = {
+            WBTC: ERC20__factory.connect(tokenAddresses.WBTC, user),
+            USDC: ERC20__factory.connect(tokenAddresses.USDC, user),
+            DAI: ERC20__factory.connect(tokenAddresses.DAI, user),
+            USDT: ERC20__factory.connect(tokenAddresses.USDT, user),
+            USDS: ERC20__factory.connect(tokenAddresses.USDS, user),
+            WETH: ERC20__factory.connect(tokenAddresses.WETH, user)
+        };
+
+        const tokenDecimals = {
+            WBTC: await tokenContracts.WBTC.decimals(),
+            USDC: await tokenContracts.USDC.decimals(),
+            DAI: await tokenContracts.DAI.decimals(),
+            USDT: await tokenContracts.USDT.decimals(),
+            USDS: await tokenContracts.USDS.decimals(),
+            WETH: await tokenContracts.WETH.decimals()
+        };
 
         // simulation of the vault contract work
         await setBalance(treasuryAddress, parseEther("1000"));
         await impersonateAccount(treasuryAddress);
         const treasurySigner = await ethers.getSigner(treasuryAddress);
 
-        await wbtcToken.connect(treasurySigner).transfer(user.address, parseUnits("0.01", 8));
-        await usdtToken.connect(treasurySigner).transfer(user.address, parseUnits("100", 6));
-        await usdcToken.connect(treasurySigner).transfer(user.address, parseUnits("100", 6));
+        await tokenContracts.WBTC.connect(treasurySigner).transfer(user.address, parseUnits("0.01", 8));
+        await tokenContracts.USDT.connect(treasurySigner).transfer(user.address, parseUnits("100", 6));
+        await tokenContracts.USDC.connect(treasurySigner).transfer(user.address, parseUnits("100", 6));
 
         await stopImpersonatingAccount(treasuryAddress);
 
-        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3DaiUsdsAdapter", owner);
+        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3UsdsAdapter", owner);
         const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
-            uniswapRouter: uniswapRouterAddress,
+            uniswapRouter: uniswapContractAddresses.router,
             daiUsdsConverter: daiUsdsAddress,
-            dai: daiTokenAddress,
-            usds: usdsTokenAddress,
-            wrappedNativeToken: weth9TokenAddress,
-            aaveLendingPool: aaveV3PoolAddress,
-            aaveDataProvider: aaveV3DataProviderAddress,
+            dai: tokenAddresses.DAI,
+            usds: tokenAddresses.USDS,
+            wrappedNativeToken: tokenAddresses.WETH,
+            aaveLendingPool: aaveContractAddresses.pool,
+            aaveDataProvider: aaveContractAddresses.protocolDataProvider,
             isFullMigration: true
-        })) as AaveV3DaiUsdsAdapter;
+        })) as AaveV3UsdsAdapter;
         await aaveV3Adapter.deployed();
 
         const adapters = [aaveV3Adapter.address];
-        const comets = [cUSDCv3Address]; // Compound USDC (cUSDCv3) market
+        const comets = [compoundContractAddresses.markets.cUSDCv3]; // Compound USDC (cUSDCv3) market
 
         // Set up flashData for migrator
         const flashData = [
             {
-                liquidityPool: UniswapV3PoolUsdcUsdt, // Uniswap V3 pool USDC / USDT
-                baseToken: usdcTokenAddress, // USDC
+                liquidityPool: uniswapContractAddresses.pools.USDC_USDT, // Uniswap V3 pool USDC / USDT
+                baseToken: tokenAddresses.USDC, // USDC
                 isToken0: true
             }
         ];
@@ -107,85 +144,74 @@ describe("MigratorV2 with AaveV3", function () {
         return {
             owner,
             user,
-            wbtcTokenAddress,
-            aWbtcTokenAddress,
-            usdcTokenAddress,
-            daiTokenAddress,
-            aDaiTokenAddress,
-            varDebtDaiTokenAddress,
-            usdtTokenAddress,
-            aUsdtTokenAddress,
-            varDebtUsdtTokenAddress,
-            varDebtUsdcTokenAddress,
-            usdsTokenAddress,
-            weth9TokenAddress,
-            aaveV3DataProviderAddress,
-            aaveV3PoolAddress,
+            tokenAddresses,
+            tokenContracts,
+            tokenDecimals,
+            aaveContractAddresses,
+            uniswapContractAddresses,
+            compoundContractAddresses,
             daiUsdsAddress,
-            uniswapRouterAddress,
-            cUSDCv3Address,
-            wbtcToken,
-            usdtToken,
-            usdcToken,
-            daiToken,
-            usdsToken,
             aaveV3Adapter,
             migratorV2
         };
     }
+
+    beforeEach(async function () {
+        // this.timeout(60000);
+        // const sleepTime = 15000; // 15 seconds
+        // console.log(`Sleeping for ${sleepTime / 1000} seconds...`);
+        // await sleep(sleepTime); // 15 seconds
+    });
+
     context("Migrate positions from AaveV3 to cUSDCv3", function () {
-        it.skip("Should be successful migration: without swaps", async function () {
+        it("Should be successful migration: without swaps", async function () {
+            // @todo one collateral and one borrow tokens
             const {
                 user,
-                wbtcToken,
-                aaveV3DataProviderAddress,
-                aaveV3PoolAddress,
-                usdtTokenAddress,
-                usdcTokenAddress,
-                daiTokenAddress,
-                wbtcTokenAddress,
-                aWbtcTokenAddress,
-                varDebtUsdcTokenAddress,
-                cUSDCv3Address,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2
             } = await loadFixture(setupEnv);
 
             // setup the collateral and borrow positions in AaveV3
-            const aaveV3DataProvider = IAavePoolDataProvider__factory.connect(aaveV3DataProviderAddress, user);
-            const dataProviderBefore = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
+            const aaveV3Pool = IAavePool__factory.connect(aaveContractAddresses.pool, user);
 
-            expect(dataProviderBefore.currentATokenBalance).to.be.equal(Zero);
+            const supplyAmount = parseUnits("0.01", tokenDecimals.WBTC);
+            const borrowAmount = parseUnits("100", tokenDecimals.USDC);
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
 
-            const aaveV3Pool = IAavePool__factory.connect(aaveV3PoolAddress, user);
+            await tokenContracts.WBTC.approve(aaveV3Pool.address, supplyAmount);
+            await aaveV3Pool.supply(tokenAddresses.WBTC, supplyAmount, user.address, referralCode);
 
-            await wbtcToken.approve(aaveV3Pool.address, parseUnits("0.01", 8));
-            await aaveV3Pool.supply(wbtcToken.address, parseUnits("0.01", 8), user.address, 0);
-
-            await aaveV3Pool.borrow(usdcTokenAddress, parseUnits("100", 6), 2, 0, user.address);
-
-            const dataProviderAfter = await aaveV3DataProvider.getUserReserveData(usdtTokenAddress, user.address);
-            console.log("currentVariableDebt: ", dataProviderAfter.currentVariableDebt);
+            await aaveV3Pool.borrow(tokenAddresses.USDC, borrowAmount, interestRateMode, referralCode, user.address);
 
             // Approve migration
-            const aWbtcToken = ERC20__factory.connect(aWbtcTokenAddress, user);
-            await aWbtcToken.approve(migratorV2.address, parseUnits("0.01", 8));
+            const aWbtcToken = ERC20__factory.connect(aaveContractAddresses.aToken.WBTC, user);
+            await aWbtcToken.approve(migratorV2.address, supplyAmount);
 
-            const varDebtUsdcToken = ERC20__factory.connect(varDebtUsdcTokenAddress, user);
-            const cUSDCv3Contract = IComet__factory.connect(cUSDCv3Address, user);
+            const varDebtUsdcToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.USDC, user);
+            const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
 
             await cUSDCv3Contract.allow(migratorV2.address, true);
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
-            const aWbtcUserBalance = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdcBalance = await varDebtUsdcToken.balanceOf(user.address);
-            console.log("aWbtcUserBalance:", aWbtcUserBalance);
-            console.log("varDebtUsdcBalance:", varDebtUsdcBalance);
+            const userBalancesBefore = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtUsdcToken.balanceOf(user.address),
+                collateralComet: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+            };
+
+            console.log("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
                     {
-                        aDebtToken: varDebtUsdcTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -195,7 +221,7 @@ describe("MigratorV2 with AaveV3", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aWbtcTokenAddress,
+                        aToken: aaveContractAddresses.aToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -205,96 +231,87 @@ describe("MigratorV2 with AaveV3", function () {
                 ]
             };
 
-            const positionAbi = [
-                "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-                "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-            ];
-
             // Encode the data
             const migrationData = ethers.utils.defaultAbiCoder.encode(
-                ["tuple(" + positionAbi.join(",") + ")"],
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("110", 6);
+            const flashAmount = parseUnits("110", tokenDecimals.USDC);
 
-            const collateralWbtcBalanceBeforeMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            expect(collateralWbtcBalanceBeforeMigrate).to.be.equal(Zero);
+            expect(userBalancesBefore.collateralComet).to.be.equal(Zero);
 
             await expect(
-                migratorV2.connect(user).migrate(aaveV3Adapter.address, cUSDCv3Address, migrationData, flashAmount)
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
             ).to.emit(migratorV2, "MigrationExecuted");
 
-            const aWbtcUserBalanceAfterMigrate = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdcBalanceAfterMigrate = await varDebtUsdcToken.balanceOf(user.address);
+            const userBalancesAfter = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtUsdcToken.balanceOf(user.address),
+                collateralComet: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+            };
 
-            console.log("aWbtcUserBalanceAfterMigrate:", aWbtcUserBalanceAfterMigrate);
-            console.log("varDebtUsdcBalanceAfterMigrate:", varDebtUsdcBalanceAfterMigrate);
+            console.log("userBalancesAfter:", userBalancesAfter);
 
-            expect(aWbtcUserBalanceAfterMigrate).to.be.equal(Zero);
-            expect(varDebtUsdcBalanceAfterMigrate).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave).to.be.equal(Zero);
 
-            const collateralWbtcBalanceAfterMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            console.log("collateralWbtcBalanceAfterMigrate:", collateralWbtcBalanceAfterMigrate);
+            expect(userBalancesAfter.collateralComet).to.be.equal(userBalancesBefore.collateralAave);
 
-            // expect(collateralWbtcBalanceAfterMigrate).to.be.above(Zero);
+            expect(await cUSDCv3Contract.balanceOf(user.address)).to.be.equal(Zero);
         }).timeout(0);
 
-        it.skip("Should be successful migration: with single flashloan swap", async function () {
+        it("Should be successful migration: with single flashloan swap", async function () {
+            // @todo one collateral and one borrow tokens
             const {
                 user,
-                wbtcToken,
-                daiToken,
-                aaveV3DataProviderAddress,
-                aaveV3PoolAddress,
-                usdtTokenAddress,
-                usdcTokenAddress,
-                daiTokenAddress,
-                wbtcTokenAddress,
-                aWbtcTokenAddress,
-                varDebtDaiTokenAddress,
-                cUSDCv3Address,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2
             } = await loadFixture(setupEnv);
 
             // setup the collateral and borrow positions in AaveV3
-            const aaveV3DataProvider = IAavePoolDataProvider__factory.connect(aaveV3DataProviderAddress, user);
-            const dataProviderBefore = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
+            const aaveV3Pool = IAavePool__factory.connect(aaveContractAddresses.pool, user);
 
-            expect(dataProviderBefore.currentATokenBalance).to.be.equal(Zero);
+            const supplyAmount = parseUnits("0.01", tokenDecimals.WBTC);
+            const borrowAmount = parseUnits("100", tokenDecimals.DAI);
 
-            const aaveV3Pool = IAavePool__factory.connect(aaveV3PoolAddress, user);
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
 
-            await wbtcToken.approve(aaveV3Pool.address, parseUnits("0.01", 8));
-            await aaveV3Pool.supply(wbtcToken.address, parseUnits("0.01", 8), user.address, 0);
+            await tokenContracts.WBTC.approve(aaveV3Pool.address, supplyAmount);
+            await aaveV3Pool.supply(tokenAddresses.WBTC, supplyAmount, user.address, referralCode);
 
-            await aaveV3Pool.borrow(daiTokenAddress, parseUnits("100", 18), 2, 0, user.address);
-
-            const dataProviderAfter = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
-            console.log("currentVariableDebt: ", dataProviderAfter.currentVariableDebt);
+            await aaveV3Pool.borrow(tokenAddresses.DAI, borrowAmount, interestRateMode, referralCode, user.address);
 
             // Approve migration
-            const aWbtcToken = ERC20__factory.connect(aWbtcTokenAddress, user);
-            await aWbtcToken.approve(migratorV2.address, parseUnits("0.01", 8));
+            const aWbtcToken = ERC20__factory.connect(aaveContractAddresses.aToken.WBTC, user);
+            await aWbtcToken.approve(migratorV2.address, supplyAmount);
 
-            const varDebtDaiToken = ERC20__factory.connect(varDebtDaiTokenAddress, user);
-            const cUSDCv3Contract = IComet__factory.connect(cUSDCv3Address, user);
+            const varDebtDaiToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.DAI, user);
+            const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
 
             await cUSDCv3Contract.allow(migratorV2.address, true);
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
-            const aWbtcUserBalance = await aWbtcToken.balanceOf(user.address);
-            const varDebtDiaBalance = await varDebtDaiToken.balanceOf(user.address);
-            const daiBalance = await daiToken.balanceOf(user.address);
-            console.log("aWbtcUserBalance:", aWbtcUserBalance);
-            console.log("varDebtDaiBalance:", varDebtDiaBalance);
+            const userBalancesBefore = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtDaiToken.balanceOf(user.address),
+                collateralComet: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+            };
+
+            console.log("userBalancesBefore:", userBalancesBefore);
 
             const FEE_3000 = 3000; // 0.3%
             // Convert fee to 3-byte hex
@@ -303,21 +320,21 @@ describe("MigratorV2 with AaveV3", function () {
             const position = {
                 borrows: [
                     {
-                        aDebtToken: varDebtDaiTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(daiTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountInMaximum: parseUnits("110", 6)
+                            amountInMaximum: parseUnits("130", tokenDecimals.USDC)
                         }
                     }
                 ],
                 collaterals: [
                     {
-                        aToken: aWbtcTokenAddress,
+                        aToken: aaveContractAddresses.aToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -327,99 +344,107 @@ describe("MigratorV2 with AaveV3", function () {
                 ]
             };
 
-            const positionAbi = [
-                "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-                "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-            ];
-
             // Encode the data
             const migrationData = ethers.utils.defaultAbiCoder.encode(
-                ["tuple(" + positionAbi.join(",") + ")"],
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("110", 6);
+            const flashAmount = parseUnits("130", tokenDecimals.USDC);
 
-            const collateralWbtcBalanceBeforeMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            expect(collateralWbtcBalanceBeforeMigrate).to.be.equal(Zero);
-
-            let collateralBalance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("wbtc collateral balance before migration:", collateralBalance);
+            expect(userBalancesBefore.collateralComet).to.be.equal(Zero);
 
             await expect(
-                migratorV2.connect(user).migrate(aaveV3Adapter.address, cUSDCv3Address, migrationData, flashAmount)
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
             ).to.emit(migratorV2, "MigrationExecuted");
 
-            const aWbtcUserBalanceAfterMigrate = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdtBalanceAfterMigrate = await varDebtDaiToken.balanceOf(user.address);
+            const userBalancesAfter = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtDaiToken.balanceOf(user.address),
+                collateralComet: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+            };
 
-            console.log("aWbtcUserBalanceAfterMigrate:", aWbtcUserBalanceAfterMigrate);
-            console.log("varDebtUsdcBalanceAfterMigrate:", varDebtUsdtBalanceAfterMigrate);
+            console.log("userBalancesAfter:", userBalancesAfter);
 
-            expect(aWbtcUserBalanceAfterMigrate).to.be.equal(Zero);
-            expect(varDebtUsdtBalanceAfterMigrate).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave).to.be.equal(Zero);
 
-            collateralBalance = await cUSDCv3Contract.collateralBalanceOf(user.address, wbtcTokenAddress);
-            console.log("wbtc collateral balance after migration:", collateralBalance);
+            expect(userBalancesAfter.collateralComet).to.be.equal(userBalancesBefore.collateralAave);
+
+            expect(await cUSDCv3Contract.balanceOf(user.address)).to.be.equal(Zero);
         }).timeout(0);
 
-        it.skip("Should be successful migration: with single flashloan swap and several borrows", async function () {
+        it("Should be successful migration: with single flashloan swap and several borrows", async function () {
+            // @todo one collateral and two borrow tokens
             const {
                 user,
-                wbtcToken,
-                daiToken,
-                aaveV3DataProviderAddress,
-                aaveV3PoolAddress,
-                usdtTokenAddress,
-                usdcTokenAddress,
-                daiTokenAddress,
-                wbtcTokenAddress,
-                aWbtcTokenAddress,
-                varDebtDaiTokenAddress,
-                varDebtUsdcTokenAddress,
-                cUSDCv3Address,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2
             } = await loadFixture(setupEnv);
 
             // setup the collateral and borrow positions in AaveV3
-            const aaveV3DataProvider = IAavePoolDataProvider__factory.connect(aaveV3DataProviderAddress, user);
-            const dataProviderBefore = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
+            const aaveV3Pool = IAavePool__factory.connect(aaveContractAddresses.pool, user);
 
-            expect(dataProviderBefore.currentATokenBalance).to.be.equal(Zero);
+            const supplyAmount = parseUnits("0.01", tokenDecimals.WBTC);
+            const borrowAmounts = {
+                DAI: parseUnits("70", tokenDecimals.DAI),
+                USDC: parseUnits("45", tokenDecimals.USDC)
+            };
 
-            const aaveV3Pool = IAavePool__factory.connect(aaveV3PoolAddress, user);
+            await tokenContracts.WBTC.approve(aaveV3Pool.address, supplyAmount);
+            await aaveV3Pool.supply(tokenAddresses.WBTC, supplyAmount, user.address, 0);
 
-            await wbtcToken.approve(aaveV3Pool.address, parseUnits("0.01", 8));
-            await aaveV3Pool.supply(wbtcToken.address, parseUnits("0.01", 8), user.address, 0);
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
 
-            await aaveV3Pool.borrow(daiTokenAddress, parseUnits("70", 18), 2, 0, user.address);
-            await aaveV3Pool.borrow(usdcTokenAddress, parseUnits("45", 6), 2, 0, user.address);
-
-            const dataProviderAfter = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
-            console.log("currentVariableDebt: ", dataProviderAfter.currentVariableDebt);
+            await aaveV3Pool.borrow(
+                tokenAddresses.DAI,
+                borrowAmounts.DAI,
+                interestRateMode,
+                referralCode,
+                user.address
+            );
+            await aaveV3Pool.borrow(
+                tokenAddresses.USDC,
+                borrowAmounts.USDC,
+                interestRateMode,
+                referralCode,
+                user.address
+            );
 
             // Approve migration
-            const aWbtcToken = ERC20__factory.connect(aWbtcTokenAddress, user);
-            await aWbtcToken.approve(migratorV2.address, parseUnits("0.01", 8));
+            const aWbtcToken = ERC20__factory.connect(aaveContractAddresses.aToken.WBTC, user);
+            await aWbtcToken.approve(migratorV2.address, supplyAmount);
 
-            const varDebtDaiToken = ERC20__factory.connect(varDebtDaiTokenAddress, user);
-            const varDebtUsdcToken = ERC20__factory.connect(varDebtUsdcTokenAddress, user);
-            const cUSDCv3Contract = IComet__factory.connect(cUSDCv3Address, user);
+            const varDebtDaiToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.DAI, user);
+            const varDebtUsdcToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.USDC, user);
+            const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
 
             await cUSDCv3Contract.allow(migratorV2.address, true);
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
-            const aWbtcUserBalance = await aWbtcToken.balanceOf(user.address);
-            const varDebtDiaBalance = await varDebtDaiToken.balanceOf(user.address);
-            const varDebtUsdcBalance = await varDebtUsdcToken.balanceOf(user.address);
-            const daiBalance = await daiToken.balanceOf(user.address);
-            console.log("aWbtcUserBalance:", aWbtcUserBalance);
-            console.log("varDebtDaiBalance:", varDebtDiaBalance);
-            console.log("varDebtUsdcBalance:", varDebtUsdcBalance);
+            const userBalancesBefore = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowsAave: {
+                    DAI: await varDebtDaiToken.balanceOf(user.address),
+                    USDC: await varDebtUsdcToken.balanceOf(user.address)
+                },
+                collateralComet: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+            };
+
+            console.log("userBalancesBefore:", userBalancesBefore);
 
             const FEE_3000 = 3000; // 0.3%
             // Convert fee to 3-byte hex
@@ -428,19 +453,19 @@ describe("MigratorV2 with AaveV3", function () {
             const position = {
                 borrows: [
                     {
-                        aDebtToken: varDebtDaiTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(daiTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             amountInMaximum: parseUnits("80", 6)
                         }
                     },
                     {
-                        aDebtToken: varDebtUsdcTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -450,7 +475,7 @@ describe("MigratorV2 with AaveV3", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aWbtcTokenAddress,
+                        aToken: aaveContractAddresses.aToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -460,96 +485,94 @@ describe("MigratorV2 with AaveV3", function () {
                 ]
             };
 
-            const positionAbi = [
-                "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-                "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-            ];
-
             // Encode the data
             const migrationData = ethers.utils.defaultAbiCoder.encode(
-                ["tuple(" + positionAbi.join(",") + ")"],
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("130", 6);
+            const flashAmount = parseUnits("130", tokenDecimals.USDC);
 
-            const collateralWbtcBalanceBeforeMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            expect(collateralWbtcBalanceBeforeMigrate).to.be.equal(Zero);
-
-            let collateralBalance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("wbtc collateral balance before migration:", collateralBalance);
+            expect(userBalancesBefore.collateralComet).to.be.equal(Zero);
 
             await expect(
                 migratorV2
                     .connect(user)
-                    .migrate(aaveV3Adapter.address, cUSDCv3Address, migrationData, flashAmount, { gasLimit: 10000000 })
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
             ).to.emit(migratorV2, "MigrationExecuted");
 
-            const aWbtcUserBalanceAfterMigrate = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdtBalanceAfterMigrate = await varDebtDaiToken.balanceOf(user.address);
+            const userBalancesAfter = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowsAave: {
+                    DAI: await varDebtDaiToken.balanceOf(user.address),
+                    USDC: await varDebtUsdcToken.balanceOf(user.address)
+                },
+                collateralComet: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+            };
 
-            console.log("aWbtcUserBalanceAfterMigrate:", aWbtcUserBalanceAfterMigrate);
-            console.log("varDebtUsdcBalanceAfterMigrate:", varDebtUsdtBalanceAfterMigrate);
+            console.log("userBalancesAfter:", userBalancesAfter);
 
-            expect(aWbtcUserBalanceAfterMigrate).to.be.equal(Zero);
-            expect(varDebtUsdtBalanceAfterMigrate).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowsAave.DAI).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowsAave.USDC).to.be.equal(Zero);
 
-            collateralBalance = await cUSDCv3Contract.collateralBalanceOf(user.address, wbtcTokenAddress);
-            console.log("wbtc collateral balance after migration:", collateralBalance);
+            expect(userBalancesAfter.collateralComet).to.be.equal(userBalancesBefore.collateralAave);
+
+            expect(await cUSDCv3Contract.balanceOf(user.address)).to.be.equal(Zero);
         }).timeout(0);
 
         it("Should be successful migration: with single flashloan and collateral swaps", async function () {
+            // @todo one collateral and one borrow tokens
             const {
                 user,
-                wbtcToken,
-                daiToken,
-                aaveV3DataProviderAddress,
-                aaveV3PoolAddress,
-                usdtTokenAddress,
-                usdcTokenAddress,
-                daiTokenAddress,
-                wbtcTokenAddress,
-                aWbtcTokenAddress,
-                varDebtDaiTokenAddress,
-                cUSDCv3Address,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2
             } = await loadFixture(setupEnv);
 
             // setup the collateral and borrow positions in AaveV3
-            const aaveV3DataProvider = IAavePoolDataProvider__factory.connect(aaveV3DataProviderAddress, user);
-            const dataProviderBefore = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
+            const aaveV3Pool = IAavePool__factory.connect(aaveContractAddresses.pool, user);
 
-            expect(dataProviderBefore.currentATokenBalance).to.be.equal(Zero);
+            const supplyAmount = parseUnits("0.01", tokenDecimals.WBTC);
+            const borrowAmount = parseUnits("100", tokenDecimals.DAI);
 
-            const aaveV3Pool = IAavePool__factory.connect(aaveV3PoolAddress, user);
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
 
-            await wbtcToken.approve(aaveV3Pool.address, parseUnits("0.01", 8));
-            await aaveV3Pool.supply(wbtcToken.address, parseUnits("0.01", 8), user.address, 0);
+            await tokenContracts.WBTC.approve(aaveV3Pool.address, supplyAmount);
+            await aaveV3Pool.supply(tokenAddresses.WBTC, supplyAmount, user.address, referralCode);
 
-            await aaveV3Pool.borrow(daiTokenAddress, parseUnits("100", 18), 2, 0, user.address);
-
-            const dataProviderAfter = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
-            console.log("currentVariableDebt: ", dataProviderAfter.currentVariableDebt);
+            await aaveV3Pool.borrow(tokenAddresses.DAI, borrowAmount, interestRateMode, referralCode, user.address);
 
             // Approve migration
-            const aWbtcToken = ERC20__factory.connect(aWbtcTokenAddress, user);
-            await aWbtcToken.approve(migratorV2.address, parseUnits("0.01", 8));
+            const aWbtcToken = ERC20__factory.connect(aaveContractAddresses.aToken.WBTC, user);
+            await aWbtcToken.approve(migratorV2.address, supplyAmount);
 
-            const varDebtDaiToken = ERC20__factory.connect(varDebtDaiTokenAddress, user);
-            const cUSDCv3Contract = IComet__factory.connect(cUSDCv3Address, user);
+            const varDebtDaiToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.DAI, user);
+            const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
 
             await cUSDCv3Contract.allow(migratorV2.address, true);
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
-            const aWbtcUserBalance = await aWbtcToken.balanceOf(user.address);
-            const varDebtDiaBalance = await varDebtDaiToken.balanceOf(user.address);
-            const daiBalance = await daiToken.balanceOf(user.address);
-            console.log("aWbtcUserBalance:", aWbtcUserBalance);
-            console.log("varDebtDaiBalance:", varDebtDiaBalance);
+            const userBalancesBefore = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtDaiToken.balanceOf(user.address),
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
+
+            console.log("userBalancesBefore:", userBalancesBefore);
 
             const FEE_3000 = 3000; // 0.3%
             // Convert fee to 3-byte hex
@@ -558,27 +581,27 @@ describe("MigratorV2 with AaveV3", function () {
             const position = {
                 borrows: [
                     {
-                        aDebtToken: varDebtDaiTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(daiTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountInMaximum: parseUnits("110", 6)
+                            amountInMaximum: parseUnits("130", 6)
                         }
                     }
                 ],
                 collaterals: [
                     {
-                        aToken: aWbtcTokenAddress,
+                        aToken: aaveContractAddresses.aToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(wbtcTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             amountOutMinimum: 0
                         }
@@ -586,93 +609,89 @@ describe("MigratorV2 with AaveV3", function () {
                 ]
             };
 
-            const positionAbi = [
-                "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-                "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-            ];
-
             // Encode the data
             const migrationData = ethers.utils.defaultAbiCoder.encode(
-                ["tuple(" + positionAbi.join(",") + ")"],
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("110", 6);
-
-            const collateralWbtcBalanceBeforeMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            expect(collateralWbtcBalanceBeforeMigrate).to.be.equal(Zero);
-
-            let cUSDCv3Balance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("cUSDCv3Balance before migration:", cUSDCv3Balance);
+            const flashAmount = parseUnits("130", tokenDecimals.USDC);
 
             await expect(
-                migratorV2.connect(user).migrate(aaveV3Adapter.address, cUSDCv3Address, migrationData, flashAmount)
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
             ).to.emit(migratorV2, "MigrationExecuted");
 
-            const aWbtcUserBalanceAfterMigrate = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdtBalanceAfterMigrate = await varDebtDaiToken.balanceOf(user.address);
+            const userBalancesAfter = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtDaiToken.balanceOf(user.address),
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
 
-            console.log("aWbtcUserBalanceAfterMigrate:", aWbtcUserBalanceAfterMigrate);
-            console.log("varDebtUsdcBalanceAfterMigrate:", varDebtUsdtBalanceAfterMigrate);
+            console.log("userBalancesAfter:", userBalancesAfter);
 
-            expect(aWbtcUserBalanceAfterMigrate).to.be.equal(Zero);
-            expect(varDebtUsdtBalanceAfterMigrate).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave).to.be.equal(Zero);
 
-            cUSDCv3Balance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("cUSDCv3Balance after migration:", cUSDCv3Balance);
+            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
-        it.skip("Should be successful migration: with single collateral swap", async function () {
+        it("Should be successful migration: with single collateral swap", async function () {
+            // @todo one collateral and one borrow tokens
             const {
                 user,
-                wbtcToken,
-                aaveV3DataProviderAddress,
-                aaveV3PoolAddress,
-                usdtTokenAddress,
-                usdcTokenAddress,
-                daiTokenAddress,
-                wbtcTokenAddress,
-                aWbtcTokenAddress,
-                varDebtUsdcTokenAddress,
-                cUSDCv3Address,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2
             } = await loadFixture(setupEnv);
 
-            // setup the collateral and borrow positions in AaveV3
-            const aaveV3DataProvider = IAavePoolDataProvider__factory.connect(aaveV3DataProviderAddress, user);
-            const dataProviderBefore = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
+            const aaveV3Pool = IAavePool__factory.connect(aaveContractAddresses.pool, user);
 
-            expect(dataProviderBefore.currentATokenBalance).to.be.equal(Zero);
+            const supplyAmount = parseUnits("0.01", tokenDecimals.WBTC);
+            const borrowAmount = parseUnits("100", tokenDecimals.USDC);
 
-            const aaveV3Pool = IAavePool__factory.connect(aaveV3PoolAddress, user);
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
 
-            await wbtcToken.approve(aaveV3Pool.address, parseUnits("0.01", 8));
-            await aaveV3Pool.supply(wbtcToken.address, parseUnits("0.01", 8), user.address, 0);
+            await tokenContracts.WBTC.approve(aaveV3Pool.address, supplyAmount);
+            await aaveV3Pool.supply(tokenAddresses.WBTC, supplyAmount, user.address, referralCode);
 
-            await aaveV3Pool.borrow(usdcTokenAddress, parseUnits("100", 6), 2, 0, user.address);
-
-            const dataProviderAfter = await aaveV3DataProvider.getUserReserveData(usdtTokenAddress, user.address);
-            console.log("currentVariableDebt: ", dataProviderAfter.currentVariableDebt);
+            await aaveV3Pool.borrow(tokenAddresses.USDC, borrowAmount, interestRateMode, referralCode, user.address);
 
             // Approve migration
-            const aWbtcToken = ERC20__factory.connect(aWbtcTokenAddress, user);
-            await aWbtcToken.approve(migratorV2.address, parseUnits("0.01", 8));
+            const aWbtcToken = ERC20__factory.connect(aaveContractAddresses.aToken.WBTC, user);
+            await aWbtcToken.approve(migratorV2.address, supplyAmount);
 
-            const varDebtUsdcToken = ERC20__factory.connect(varDebtUsdcTokenAddress, user);
-            const cUSDCv3Contract = IComet__factory.connect(cUSDCv3Address, user);
+            const varDebtUsdcToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.USDC, user);
+            const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
 
             await cUSDCv3Contract.allow(migratorV2.address, true);
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
-            const aWbtcUserBalance = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdcBalance = await varDebtUsdcToken.balanceOf(user.address);
-            console.log("aWbtcUserBalance:", aWbtcUserBalance);
-            console.log("varDebtUsdcBalance:", varDebtUsdcBalance);
+            const userBalancesBefore = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtUsdcToken.balanceOf(user.address),
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
 
+            console.log("userBalancesBefore:", userBalancesBefore);
             const FEE_3000 = 3000; // 0.3%
             // Convert fee to 3-byte hex
             const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
@@ -680,7 +699,7 @@ describe("MigratorV2 with AaveV3", function () {
             const position = {
                 borrows: [
                     {
-                        aDebtToken: varDebtUsdcTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -690,13 +709,13 @@ describe("MigratorV2 with AaveV3", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aWbtcTokenAddress,
+                        aToken: aaveContractAddresses.aToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(wbtcTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             amountOutMinimum: 0
                         }
@@ -704,98 +723,106 @@ describe("MigratorV2 with AaveV3", function () {
                 ]
             };
 
-            const positionAbi = [
-                "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-                "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-            ];
-
             // Encode the data
             const migrationData = ethers.utils.defaultAbiCoder.encode(
-                ["tuple(" + positionAbi.join(",") + ")"],
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("105", 6);
+            const flashAmount = parseUnits("105", tokenDecimals.USDC);
 
-            const collateralWbtcBalanceBeforeMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            expect(collateralWbtcBalanceBeforeMigrate).to.be.equal(Zero);
-
-            let cUSDCv3Balance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("cUSDCv3Balance before migration:", cUSDCv3Balance);
+            expect(userBalancesBefore.collateralsComet.USDC).to.be.equal(Zero);
+            expect(userBalancesBefore.collateralsComet.WBTC).to.be.equal(Zero);
 
             await expect(
-                migratorV2.connect(user).migrate(aaveV3Adapter.address, cUSDCv3Address, migrationData, flashAmount)
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
             ).to.emit(migratorV2, "MigrationExecuted");
 
-            const aWbtcUserBalanceAfterMigrate = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdcBalanceAfterMigrate = await varDebtUsdcToken.balanceOf(user.address);
+            const userBalancesAfter = {
+                collateralAave: await aWbtcToken.balanceOf(user.address),
+                borrowAave: await varDebtUsdcToken.balanceOf(user.address),
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
 
-            console.log("aWbtcUserBalanceAfterMigrate:", aWbtcUserBalanceAfterMigrate);
-            console.log("varDebtUsdcBalanceAfterMigrate:", varDebtUsdcBalanceAfterMigrate);
+            console.log("userBalancesAfter:", userBalancesAfter);
 
-            expect(aWbtcUserBalanceAfterMigrate).to.be.equal(Zero);
-            expect(varDebtUsdcBalanceAfterMigrate).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave).to.be.equal(Zero);
 
-            cUSDCv3Balance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("cUSDCv3Balance after migration:", cUSDCv3Balance);
+            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
-        it.skip("Should be successful migration: with single collaterals swaps", async function () {
+        it("Should be successful migration: with single collaterals swaps", async function () {
+            // @todo two collateral and one borrow tokens
             const {
                 user,
-                wbtcToken,
-                usdtToken,
-                aaveV3DataProviderAddress,
-                aaveV3PoolAddress,
-                usdtTokenAddress,
-                usdcTokenAddress,
-                daiTokenAddress,
-                wbtcTokenAddress,
-                aWbtcTokenAddress,
-                aUsdtTokenAddress,
-                varDebtUsdcTokenAddress,
-                cUSDCv3Address,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2
             } = await loadFixture(setupEnv);
 
             // setup the collateral and borrow positions in AaveV3
-            const aaveV3DataProvider = IAavePoolDataProvider__factory.connect(aaveV3DataProviderAddress, user);
-            const dataProviderBefore = await aaveV3DataProvider.getUserReserveData(daiTokenAddress, user.address);
+            const aaveV3Pool = IAavePool__factory.connect(aaveContractAddresses.pool, user);
 
-            expect(dataProviderBefore.currentATokenBalance).to.be.equal(Zero);
+            const supplyAmounts = {
+                WBTC: parseUnits("0.01", tokenDecimals.WBTC),
+                USDT: parseUnits("100", tokenDecimals.USDT)
+            };
 
-            const aaveV3Pool = IAavePool__factory.connect(aaveV3PoolAddress, user);
+            const borrowAmount = parseUnits("100", tokenDecimals.USDC);
 
-            await wbtcToken.approve(aaveV3Pool.address, parseUnits("0.01", 8));
-            await usdtToken.approve(aaveV3Pool.address, parseUnits("100", 6));
-            await aaveV3Pool.supply(wbtcToken.address, parseUnits("0.01", 8), user.address, 0);
-            await aaveV3Pool.supply(usdtToken.address, parseUnits("100", 6), user.address, 0);
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
 
-            await aaveV3Pool.borrow(usdcTokenAddress, parseUnits("100", 6), 2, 0, user.address);
+            await tokenContracts.WBTC.approve(aaveV3Pool.address, supplyAmounts.WBTC);
+            await aaveV3Pool.supply(tokenAddresses.WBTC, MaxUint256, user.address, referralCode);
 
-            const dataProviderAfter = await aaveV3DataProvider.getUserReserveData(usdtTokenAddress, user.address);
-            console.log("currentVariableDebt: ", dataProviderAfter.currentVariableDebt);
+            await tokenContracts.USDT.approve(aaveV3Pool.address, supplyAmounts.USDT);
+            await aaveV3Pool.supply(tokenAddresses.USDT, MaxUint256, user.address, referralCode);
+
+            await aaveV3Pool.borrow(tokenAddresses.USDC, borrowAmount, interestRateMode, referralCode, user.address);
 
             // Approve migration
-            const aWbtcToken = ERC20__factory.connect(aWbtcTokenAddress, user);
-            const aUsdtToken = ERC20__factory.connect(aUsdtTokenAddress, user);
-            await aWbtcToken.approve(migratorV2.address, parseUnits("0.01", 8));
-            await aUsdtToken.approve(migratorV2.address, parseUnits("200", 6));
+            const aWbtcToken = ERC20__factory.connect(aaveContractAddresses.aToken.WBTC, user);
+            await aWbtcToken.approve(migratorV2.address, supplyAmounts.WBTC);
 
-            const varDebtUsdcToken = ERC20__factory.connect(varDebtUsdcTokenAddress, user);
-            const cUSDCv3Contract = IComet__factory.connect(cUSDCv3Address, user);
+            const aUsdtToken = ERC20__factory.connect(aaveContractAddresses.aToken.USDT, user);
+            await aUsdtToken.approve(migratorV2.address, supplyAmounts.USDT);
+
+            const varDebtUsdcToken = ERC20__factory.connect(aaveContractAddresses.variableDebtToken.USDC, user);
+            const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
 
             await cUSDCv3Contract.allow(migratorV2.address, true);
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
-            const aWbtcUserBalance = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdcBalance = await varDebtUsdcToken.balanceOf(user.address);
-            console.log("aWbtcUserBalance:", aWbtcUserBalance);
-            console.log("varDebtUsdcBalance:", varDebtUsdcBalance);
+            const userBalancesBefore = {
+                collateralsAave: {
+                    WBTC: await aWbtcToken.balanceOf(user.address),
+                    USDT: await aUsdtToken.balanceOf(user.address)
+                },
+                borrowAave: await varDebtUsdcToken.balanceOf(user.address),
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
+
+            console.log("userBalancesBefore:", userBalancesBefore);
 
             const FEE_3000 = 3000; // 0.3%
             // Convert fee to 3-byte hex
@@ -804,7 +831,7 @@ describe("MigratorV2 with AaveV3", function () {
             const position = {
                 borrows: [
                     {
-                        aDebtToken: varDebtUsdcTokenAddress,
+                        aDebtToken: aaveContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -814,25 +841,25 @@ describe("MigratorV2 with AaveV3", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aWbtcTokenAddress,
+                        aToken: aaveContractAddresses.aToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(wbtcTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             amountOutMinimum: 0
                         }
                     },
                     {
-                        aToken: aUsdtTokenAddress,
+                        aToken: aaveContractAddresses.aToken.USDT,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(usdtTokenAddress, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.USDT, 20),
                                 fee3000,
-                                ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             amountOutMinimum: 0
                         }
@@ -840,171 +867,172 @@ describe("MigratorV2 with AaveV3", function () {
                 ]
             };
 
-            const positionAbi = [
-                "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-                "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-            ];
-
             // Encode the data
             const migrationData = ethers.utils.defaultAbiCoder.encode(
-                ["tuple(" + positionAbi.join(",") + ")"],
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("105", 6);
-
-            const collateralWbtcBalanceBeforeMigrate = await cUSDCv3Contract.collateralBalanceOf(
-                user.address,
-                wbtcTokenAddress
-            );
-            expect(collateralWbtcBalanceBeforeMigrate).to.be.equal(Zero);
-
-            let cUSDCv3Balance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("cUSDCv3Balance before migration:", cUSDCv3Balance);
+            const flashAmount = parseUnits("110", tokenDecimals.USDC);
 
             await expect(
-                migratorV2.connect(user).migrate(aaveV3Adapter.address, cUSDCv3Address, migrationData, flashAmount)
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
             ).to.emit(migratorV2, "MigrationExecuted");
 
-            const aWbtcUserBalanceAfterMigrate = await aWbtcToken.balanceOf(user.address);
-            const varDebtUsdcBalanceAfterMigrate = await varDebtUsdcToken.balanceOf(user.address);
+            const userBalancesAfter = {
+                collateralsAave: {
+                    WBTC: await aWbtcToken.balanceOf(user.address),
+                    USDT: await aUsdtToken.balanceOf(user.address)
+                },
+                borrowAave: await varDebtUsdcToken.balanceOf(user.address),
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
 
-            console.log("aWbtcUserBalanceAfterMigrate:", aWbtcUserBalanceAfterMigrate);
-            console.log("varDebtUsdcBalanceAfterMigrate:", varDebtUsdcBalanceAfterMigrate);
+            console.log("userBalancesAfter:", userBalancesBefore);
 
-            expect(aWbtcUserBalanceAfterMigrate).to.be.equal(Zero);
-            expect(varDebtUsdcBalanceAfterMigrate).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.USDT).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave).to.be.equal(Zero);
 
-            cUSDCv3Balance = await cUSDCv3Contract.balanceOf(user.address);
-            console.log("cUSDCv3Balance after migration:", cUSDCv3Balance);
+            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
         }).timeout(0);
     });
 
-    context("---- DEV TESTING ----", function () {
-        it.skip("-DEV: test Path for Single Swaps: USDT->USDC", async function () {
-            const { user, usdcTokenAddress, usdtTokenAddress, uniswapRouterAddress, usdtToken, usdcToken } =
-                await loadFixture(setupEnv);
+    // context("---- DEV TESTING ----", function () {
+    //     it.skip("-DEV: test Path for Single Swaps: USDT->USDC", async function () {
+    //         const { user, usdcTokenAddress, usdtTokenAddress, uniswapRouterAddress, usdtToken, usdcToken } =
+    //             await loadFixture(setupEnv);
 
-            const amountOutMinimum = parseUnits("45", 6);
-            const amountIn = parseUnits("50", 6);
+    //         const amountOutMinimum = parseUnits("45", 6);
+    //         const amountIn = parseUnits("50", 6);
 
-            await usdcToken.approve(uniswapRouterAddress, MaxUint256);
-            // await usdtToken.approve(uniswapRouterAddress, MaxUint256);
+    //         await usdcToken.approve(uniswapRouterAddress, MaxUint256);
+    //         // await usdtToken.approve(uniswapRouterAddress, MaxUint256);
 
-            const balanceUsdcBefore = await usdcToken.balanceOf(user.address);
-            console.log("balanceUsdcBefore:", balanceUsdcBefore.toString());
+    //         const balanceUsdcBefore = await usdcToken.balanceOf(user.address);
+    //         console.log("balanceUsdcBefore:", balanceUsdcBefore.toString());
 
-            const swapRouter = MockSwapRouter__factory.connect(uniswapRouterAddress, user);
+    //         const swapRouter = MockSwapRouter__factory.connect(uniswapRouterAddress, user);
 
-            const balanceUsdtBefore = await usdtToken.balanceOf(user.address);
-            console.log("balanceUsdtBefore:", balanceUsdtBefore.toString());
+    //         const balanceUsdtBefore = await usdtToken.balanceOf(user.address);
+    //         console.log("balanceUsdtBefore:", balanceUsdtBefore.toString());
 
-            const FEE_3000 = 3000; // 0.3%
-            // Convert fee to 3-byte hex
-            const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
+    //         const FEE_3000 = 3000; // 0.3%
+    //         // Convert fee to 3-byte hex
+    //         const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
 
-            const tx = await swapRouter.exactInput({
-                path: ethers.utils.concat([
-                    ethers.utils.hexZeroPad(usdcTokenAddress, 20),
-                    fee3000,
-                    ethers.utils.hexZeroPad(usdtTokenAddress, 20)
-                ]),
-                recipient: user.address,
-                deadline: Math.floor(Date.now() / 1000 + 1800),
-                amountIn,
-                amountOutMinimum
-            });
+    //         const tx = await swapRouter.exactInput({
+    //             path: ethers.utils.concat([
+    //                 ethers.utils.hexZeroPad(usdcTokenAddress, 20),
+    //                 fee3000,
+    //                 ethers.utils.hexZeroPad(usdtTokenAddress, 20)
+    //             ]),
+    //             recipient: user.address,
+    //             deadline: Math.floor(Date.now() / 1000 + 1800),
+    //             amountIn,
+    //             amountOutMinimum
+    //         });
 
-            await tx.wait(1);
+    //         await tx.wait(1);
 
-            const balanceUsdtAfter = await usdtToken.balanceOf(user.address);
-            console.log("balanceUsdtAfter:", balanceUsdtAfter.toString());
+    //         const balanceUsdtAfter = await usdtToken.balanceOf(user.address);
+    //         console.log("balanceUsdtAfter:", balanceUsdtAfter.toString());
 
-            expect(balanceUsdtAfter).to.be.above(balanceUsdtBefore);
-        }).timeout(0);
+    //         expect(balanceUsdtAfter).to.be.above(balanceUsdtBefore);
+    //     }).timeout(0);
 
-        it.skip("-DEV: test Path for Single Swaps: USDT->USDC", async function () {
-            const { user, usdcTokenAddress, usdtTokenAddress, uniswapRouterAddress, usdtToken, usdcToken } =
-                await loadFixture(setupEnv);
+    //     it.skip("-DEV: test Path for Single Swaps: USDT->USDC", async function () {
+    //         const { user, usdcTokenAddress, usdtTokenAddress, uniswapRouterAddress, usdtToken, usdcToken } =
+    //             await loadFixture(setupEnv);
 
-            const amountInMaximum = parseUnits("55", 6);
-            const amountOut = parseUnits("50", 6);
+    //         const amountInMaximum = parseUnits("55", 6);
+    //         const amountOut = parseUnits("50", 6);
 
-            await usdtToken.approve(uniswapRouterAddress, amountInMaximum);
+    //         await usdtToken.approve(uniswapRouterAddress, amountInMaximum);
 
-            const swapRouter = MockSwapRouter__factory.connect(uniswapRouterAddress, user);
+    //         const swapRouter = MockSwapRouter__factory.connect(uniswapRouterAddress, user);
 
-            const balanceUsdtBefore = await usdtToken.balanceOf(user.address);
+    //         const balanceUsdtBefore = await usdtToken.balanceOf(user.address);
 
-            const FEE_3000 = 3000; // 0.3%
-            // Convert fee to 3-byte hex
-            const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
+    //         const FEE_3000 = 3000; // 0.3%
+    //         // Convert fee to 3-byte hex
+    //         const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
 
-            const tx = await swapRouter.exactOutput({
-                // path: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48000bb8dac17f958d2ee523a2206206994597c13d831ec7",
-                path: ethers.utils.concat([
-                    ethers.utils.hexZeroPad(usdcTokenAddress, 20),
-                    fee3000,
-                    ethers.utils.hexZeroPad(usdtTokenAddress, 20)
-                ]),
-                recipient: user.address,
-                deadline: Math.floor(Date.now() / 1000 + 1800),
-                amountOut: amountOut,
-                amountInMaximum: amountInMaximum
-            });
+    //         const tx = await swapRouter.exactOutput({
+    //             // path: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48000bb8dac17f958d2ee523a2206206994597c13d831ec7",
+    //             path: ethers.utils.concat([
+    //                 ethers.utils.hexZeroPad(usdcTokenAddress, 20),
+    //                 fee3000,
+    //                 ethers.utils.hexZeroPad(usdtTokenAddress, 20)
+    //             ]),
+    //             recipient: user.address,
+    //             deadline: Math.floor(Date.now() / 1000 + 1800),
+    //             amountOut: amountOut,
+    //             amountInMaximum: amountInMaximum
+    //         });
 
-            await tx.wait(1);
+    //         await tx.wait(1);
 
-            const balanceUsdtAfter = await usdtToken.balanceOf(user.address);
+    //         const balanceUsdtAfter = await usdtToken.balanceOf(user.address);
 
-            expect(balanceUsdtAfter).to.be.below(balanceUsdtBefore);
-            await expect(tx).to.be.changeTokenBalance(usdcToken, user, amountOut);
-        }).timeout(0);
+    //         expect(balanceUsdtAfter).to.be.below(balanceUsdtBefore);
+    //         await expect(tx).to.be.changeTokenBalance(usdcToken, user, amountOut);
+    //     }).timeout(0);
 
-        it.skip("-DEV: test Path for Multihop Swaps: USDT->DAI->USDS", async function () {
-            const {
-                user,
-                daiTokenAddress,
-                usdsTokenAddress,
-                usdtTokenAddress,
-                uniswapRouterAddress,
-                usdtToken,
-                daiToken,
-                usdsToken
-            } = await loadFixture(setupEnv);
-            const amountInMaximum = parseUnits("55", 6);
-            const amountOut = parseUnits("50", 18);
+    //     it.skip("-DEV: test Path for Multihop Swaps: USDT->DAI->USDS", async function () {
+    //         const {
+    //             user,
+    //             daiTokenAddress,
+    //             usdsTokenAddress,
+    //             usdtTokenAddress,
+    //             uniswapRouterAddress,
+    //             usdtToken,
+    //             daiToken,
+    //             usdsToken
+    //         } = await loadFixture(setupEnv);
+    //         const amountInMaximum = parseUnits("55", 6);
+    //         const amountOut = parseUnits("50", 18);
 
-            await usdtToken.approve(uniswapRouterAddress, amountInMaximum);
+    //         await usdtToken.approve(uniswapRouterAddress, amountInMaximum);
 
-            const swapRouter = MockSwapRouter__factory.connect(uniswapRouterAddress, user);
+    //         const swapRouter = MockSwapRouter__factory.connect(uniswapRouterAddress, user);
 
-            const balanceUsdtBefore = await usdtToken.balanceOf(user.address);
+    //         const balanceUsdtBefore = await usdtToken.balanceOf(user.address);
 
-            const FEE_3000 = 3000; // 0.3%
-            // Convert fee to 3-byte hex
-            const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
+    //         const FEE_3000 = 3000; // 0.3%
+    //         // Convert fee to 3-byte hex
+    //         const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
 
-            const tx = await swapRouter.exactOutput({
-                path: ethers.utils.concat([
-                    ethers.utils.hexZeroPad(usdsTokenAddress, 20),
-                    fee3000,
-                    ethers.utils.hexZeroPad(daiTokenAddress, 20),
-                    fee3000,
-                    ethers.utils.hexZeroPad(usdtTokenAddress, 20)
-                ]),
-                recipient: user.address,
-                deadline: Math.floor(Date.now() / 1000 + 1800),
-                amountOut: amountOut,
-                amountInMaximum: amountInMaximum
-            });
+    //         const tx = await swapRouter.exactOutput({
+    //             path: ethers.utils.concat([
+    //                 ethers.utils.hexZeroPad(usdsTokenAddress, 20),
+    //                 fee3000,
+    //                 ethers.utils.hexZeroPad(daiTokenAddress, 20),
+    //                 fee3000,
+    //                 ethers.utils.hexZeroPad(usdtTokenAddress, 20)
+    //             ]),
+    //             recipient: user.address,
+    //             deadline: Math.floor(Date.now() / 1000 + 1800),
+    //             amountOut: amountOut,
+    //             amountInMaximum: amountInMaximum
+    //         });
 
-            await tx.wait(1);
+    //         await tx.wait(1);
 
-            const balanceUsdtAfter = await usdtToken.balanceOf(user.address);
+    //         const balanceUsdtAfter = await usdtToken.balanceOf(user.address);
 
-            await expect(tx).to.be.changeTokenBalance(usdsToken, user, amountOut);
-            expect(balanceUsdtAfter).to.be.below(balanceUsdtBefore);
-        }).timeout(0);
-    });
+    //         await expect(tx).to.be.changeTokenBalance(usdsToken, user, amountOut);
+    //         expect(balanceUsdtAfter).to.be.below(balanceUsdtBefore);
+    //     }).timeout(0);
+    // });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IDaiUsds} from "../interfaces/IDaiUsds.sol";
 import {CommonErrors} from "../errors/CommonErrors.sol";
 
@@ -11,6 +11,9 @@ import {CommonErrors} from "../errors/CommonErrors.sol";
  * @dev Designed as an abstract contract for adapters to inherit.
  */
 abstract contract ConvertModule is CommonErrors {
+    /// -------- Libraries -------- ///
+    using SafeERC20 for IERC20;
+
     /// --------Constants-------- ///
 
     /**
@@ -63,7 +66,7 @@ abstract contract ConvertModule is CommonErrors {
      */
     function _convertDaiToUsds(uint256 daiAmount) internal returns (uint256 usdsAmount) {
         // Approve the DaiUsds converter to spend DAI
-        IERC20(DAI).approve(address(DAI_USDS_CONVERTER), daiAmount);
+        IERC20(DAI).forceApprove(address(DAI_USDS_CONVERTER), daiAmount);
         // Get the USDS balance before conversion
         uint256 usdsAmountBefore = IERC20(USDS).balanceOf(address(this));
         // Convert DAI to USDS
@@ -84,7 +87,7 @@ abstract contract ConvertModule is CommonErrors {
      */
     function _convertUsdsToDai(uint256 usdsAmount) internal returns (uint256 daiAmount) {
         // Approve the DaiUsds converter to spend USDS
-        IERC20(USDS).approve(address(DAI_USDS_CONVERTER), usdsAmount);
+        IERC20(USDS).forceApprove(address(DAI_USDS_CONVERTER), usdsAmount);
         // Get the DAI balance before conversion
         uint256 daiBalanceBefore = IERC20(DAI).balanceOf(address(this));
         // Convert USDS to DAI

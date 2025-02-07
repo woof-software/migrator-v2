@@ -157,10 +157,10 @@ const config: HardhatUserConfig = {
             accounts: [process.env.SEPOLIA_KEYS || ""]
             // gas: 30000000
         },
-        arbitrum: {
-            chainId: 421614,
-            url: process.env.ARBITRUM_TESTNET_URL || "",
-            accounts: [process.env.ARBITRUM_TESTNET_KEYS || ""]
+        arbitrumOne: {
+            chainId: 42161,
+            url: process.env.ARBITRUM_URL || "",
+            accounts: [process.env.ARBITRUM_KEYS || ""]
         },
         polygon: {
             chainId: 80002,
@@ -214,7 +214,7 @@ const config: HardhatUserConfig = {
             sepolia: process.env.ETHERSCAN_API_KEY || "",
             bscTestnet: process.env.BSCSCAN_API_KEY || "",
             avalancheFujiTestnet: "avalancheFujiTestnet", // apiKey is not required, just set a placeholder
-            arbitrum: process.env.ARBITRUM_TESTNET_API_KEY || "",
+            arbitrumOne: process.env.ARBITRUM_TESTNET_API_KEY || "",
             polygon: process.env.POLYGON_TESTNET_API_KEY || ""
         },
         customChains: [

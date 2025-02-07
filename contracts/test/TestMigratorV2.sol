@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {IProtocolAdapter} from "./interfaces/IProtocolAdapter.sol";
-import {IUniswapV3FlashCallback} from "./interfaces/@uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
-import {IUniswapV3Pool} from "./interfaces/@uniswap/v3-core/IUniswapV3Pool.sol";
-import {IWETH9} from "./interfaces/IWETH9.sol";
-import {IComet} from "./interfaces/IComet.sol";
+import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
+import {IUniswapV3FlashCallback} from "../interfaces/@uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
+import {IUniswapV3Pool} from "../interfaces/@uniswap/v3-core/IUniswapV3Pool.sol";
+import {IComet} from "../interfaces/IComet.sol";
+import {IERC20NonStandard} from "../interfaces/IERC20NonStandard.sol";
 
 /**
  * @title MigratorV2
  * @notice This contract facilitates migration of user positions between protocols using flash loans from Uniswap V3.
  * @dev The contract interacts with Uniswap V3 for flash loans and uses protocol adapters to execute migrations.
  */
-contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausable {
-    /// -------- Libraries -------- ///
-    using SafeERC20 for IERC20;
-
+contract TestMigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausable {
     /// --------Types-------- ///
 
     /**
@@ -368,13 +364,15 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
             }
         }
 
-        uint256 balance = IERC20(flashData.baseToken).balanceOf(address(this));
+        uint256 balance = IERC20NonStandard(flashData.baseToken).balanceOf(address(this));
 
         if (balance < flashAmountWithFee) {
             IComet(comet).withdrawFrom(user, address(this), address(flashData.baseToken), flashAmountWithFee - balance);
         }
 
-        IERC20(flashData.baseToken).safeTransfer(flashData.liquidityPool, flashAmountWithFee);
+        if (!_doTransferOut(IERC20NonStandard(flashData.baseToken), flashData.liquidityPool, flashAmountWithFee)) {
+            revert ERC20TransferFailure();
+        }
 
         emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
     }
@@ -441,5 +439,36 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         delete _flashData[comet];
 
         emit FlashDataRemoved(comet);
+    }
+
+    /**
+     * @notice Handles token transfers while supporting both standard and non-standard ERC-20 tokens.
+     * @param asset The ERC-20 token to transfer out.
+     * @param to The recipient of the token transfer.
+     * @param amount The amount of tokens to transfer.
+     * @return Boolean indicating the success of the transfer.
+     * @dev Safely handles tokens that do not return a success value on transfer.
+     */
+    function _doTransferOut(IERC20NonStandard asset, address to, uint256 amount) private returns (bool) {
+        asset.transfer(to, amount);
+
+        bool success;
+        assembly {
+            switch returndatasize()
+            case 0 {
+                // Non-standard ERC-20: no return value, assume success.
+                success := not(0) // Set success to true.
+            }
+            case 32 {
+                // Standard ERC-20: return value is a single boolean.
+                returndatacopy(0, 0, 32)
+                success := mload(0) // Load the return value into success.
+            }
+            default {
+                // Invalid ERC-20: unexpected return data size.
+                revert(0, 0)
+            }
+        }
+        return success;
     }
 }

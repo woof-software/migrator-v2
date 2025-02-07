@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
-import {IERC20NonStandard} from "../interfaces/IERC20NonStandard.sol";
 import {CommonErrors} from "../errors/CommonErrors.sol";
 
 /**
@@ -12,6 +12,9 @@ import {CommonErrors} from "../errors/CommonErrors.sol";
  * @dev Designed as an abstract contract for adapters to inherit.
  */
 abstract contract SwapModule is ReentrancyGuard, CommonErrors {
+    /// -------- Libraries -------- ///
+    using SafeERC20 for IERC20;
+
     /// --------Structs-------- ///
 
     struct SwapInputLimitParams {
@@ -96,12 +99,12 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
 
         address tokenOut = _decodeTokenOut(params.path);
 
-        _approveTokenForSwap(IERC20NonStandard(tokenOut));
+        _approveTokenForSwap(tokenOut);
 
         // Perform the swap
         amountIn = UNISWAP_ROUTER.exactOutput(params);
 
-        _clearApprove(IERC20NonStandard(tokenOut));
+        _clearApprove(tokenOut);
     }
 
     /**
@@ -120,12 +123,12 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
 
         address tokenIn = _decodeTokenIn(params.path);
 
-        _approveTokenForSwap(IERC20NonStandard(tokenIn));
+        _approveTokenForSwap(tokenIn);
 
         // Perform the swap
         amountOut = UNISWAP_ROUTER.exactInput(params);
 
-        _clearApprove(IERC20NonStandard(tokenIn));
+        _clearApprove(tokenIn);
     }
 
     /**
@@ -152,8 +155,8 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
      * @param token The token to approve for spending.
      * @notice Approves the Uniswap router maximum allowance to spend a token.
      */
-    function _approveTokenForSwap(IERC20NonStandard token) internal {
-        token.approve(address(UNISWAP_ROUTER), type(uint256).max);
+    function _approveTokenForSwap(address token) internal {
+        IERC20(token).forceApprove(address(UNISWAP_ROUTER), type(uint256).max);
     }
 
     /**
@@ -161,8 +164,8 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
      * @param token The token to clear approval for.
      * @notice Clears the approval of a token for the Uniswap router.
      */
-    function _clearApprove(IERC20NonStandard token) internal {
-        token.approve(address(UNISWAP_ROUTER), 0);
+    function _clearApprove(address token) internal {
+        IERC20(token).forceApprove(address(UNISWAP_ROUTER), 0);
     }
 
     /**

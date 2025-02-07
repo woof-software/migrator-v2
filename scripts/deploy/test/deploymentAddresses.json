@@ -1,0 +1,42 @@
+{
+    "hardhat": {
+        "old": {},
+        "new": {
+            "TestAaveV3DaiAdapter": {
+                "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+                "deployedBlock": 1,
+                "chainId": 1
+            },
+            "TestMigratorV2": {
+                "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+                "deployedBlock": 1,
+                "chainId": 1
+            }
+        }
+    },
+    "arbitrum": {
+        "old": {},
+        "new": {
+            "TestAaveV3DaiAdapter": {
+                "address": "0x74c15Aa6f11029e900493e53898dD558aF4B842f",
+                "deployedBlock": 297848801,
+                "chainId": 42161
+            }
+        }
+    },
+    "arbitrumOne": {
+        "old": {},
+        "new": {
+            "TestAaveV3DaiAdapter": {
+                "address": "0x96d5e6C5821a384237673A4444ACf6721E4d9E1d",
+                "deployedBlock": 297849194,
+                "chainId": 42161
+            },
+            "TestMigratorV2": {
+                "address": "0x70395912F72861FD42cA33Ce671bC936E5f29dCF",
+                "deployedBlock": 297851979,
+                "chainId": 42161
+            }
+        }
+    }
+}

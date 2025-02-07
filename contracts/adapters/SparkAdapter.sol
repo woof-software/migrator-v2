@@ -10,12 +10,12 @@ import {ISpToken} from "../interfaces/spark/ISpToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
-import {WrapModule} from "../modules/WrapModule.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
+import {IWETH9} from "../interfaces/IWETH9.sol";
 
 /// @title SparkAdapter
 /// @notice Adapter contract to migrate positions from Spark to Compound III (Comet)
-contract SparkAdapter is IProtocolAdapter, SwapModule, WrapModule, ConvertModule {
+contract SparkAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// --------Custom Types-------- ///
 
     /**
@@ -74,6 +74,13 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, WrapModule, ConvertModule
 
     /// --------Constants-------- ///
 
+    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    /**
+     * @notice Address of the wrapped native token (e.g., WETH).
+     */
+    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
+
     /// @notice Interest rate mode for variable-rate borrowings in Spark (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
 
@@ -117,12 +124,14 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, WrapModule, ConvertModule
     )
         SwapModule(deploymentParams.uniswapRouter)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
-        WrapModule(deploymentParams.wrappedNativeToken)
     {
-        if (deploymentParams.sparkLendingPool == address(0)) revert InvalidZeroAddress();
+        if (deploymentParams.sparkLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
+            revert InvalidZeroAddress();
+
         LENDING_POOL = ISparkPool(deploymentParams.sparkLendingPool);
         DATA_PROVIDER = ISparkPoolDataProvider(deploymentParams.sparkDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
+        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -240,10 +249,12 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, WrapModule, ConvertModule
                 return;
             }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == WrapModule.NATIVE_TOKEN) {
-            uint256 wrappedAmount = _wrapNativeToken(spTokenAmount);
-            WrapModule.WRAPPED_NATIVE_TOKEN.approve(comet, wrappedAmount);
-            IComet(comet).supplyTo(user, address(WrapModule.WRAPPED_NATIVE_TOKEN), wrappedAmount);
+        } else if (underlyingAsset == NATIVE_TOKEN) {
+            // Wrap the native token
+            WRAPPED_NATIVE_TOKEN.deposit{value: spTokenAmount}();
+            // Approve the wrapped native token to be spent by Comet
+            WRAPPED_NATIVE_TOKEN.approve(comet, spTokenAmount);
+            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), spTokenAmount);
             return;
             // If no swap is required, supply the collateral directly to Comet
         } else {

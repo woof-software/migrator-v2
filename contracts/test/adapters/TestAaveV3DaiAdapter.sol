@@ -2,25 +2,24 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
-import {IAavePool} from "../interfaces/aave/IAavePool.sol";
-import {IAavePoolDataProvider} from "../interfaces/aave/IAavePoolDataProvider.sol";
-import {IADebtToken} from "../interfaces/aave/IADebtToken.sol";
-import {IAToken} from "../interfaces/aave/IAToken.sol";
-import {IComet} from "../interfaces/IComet.sol";
-import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
-import {SwapModule} from "../modules/SwapModule.sol";
-import {WrapModule} from "../modules/WrapModule.sol";
+import {IProtocolAdapter} from "../../interfaces/IProtocolAdapter.sol";
+import {IAavePool} from "../../interfaces/aave/IAavePool.sol";
+import {IAavePoolDataProvider} from "../../interfaces/aave/IAavePoolDataProvider.sol";
+import {IADebtToken} from "../../interfaces/aave/IADebtToken.sol";
+import {IAToken} from "../../interfaces/aave/IAToken.sol";
+import {IComet} from "../../interfaces/IComet.sol";
+import {ISwapRouter} from "../../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {SwapModule} from "../../modules/SwapModule.sol";
+import {WrapModule} from "../../modules/WrapModule.sol";
 
 /// @title AaveV3DaiAdapter
 /// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
-contract AaveV3DaiAdapter is IProtocolAdapter, SwapModule, WrapModule {
+contract TestAaveV3DaiAdapter is IProtocolAdapter, SwapModule, WrapModule {
     /// --------Custom Types-------- ///
 
     /**
      * @notice Initializes the AaveV3Adapter contract
      * @param uniswapRouter Address of the Uniswap V3 SwapRouter contract
-     * @param daiUsdsConverter Address of the DAI to USDS converter contract
      * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH)
      * @param aaveLendingPool Address of the Aave V3 Lending Pool contract
      * @param aaveDataProvider Address of the Aave V3 Data Provider contract
@@ -28,7 +27,6 @@ contract AaveV3DaiAdapter is IProtocolAdapter, SwapModule, WrapModule {
      */
     struct DeploymentParams {
         address uniswapRouter;
-        address daiUsdsConverter;
         address wrappedNativeToken;
         address aaveLendingPool;
         address aaveDataProvider;
@@ -150,8 +148,8 @@ contract AaveV3DaiAdapter is IProtocolAdapter, SwapModule, WrapModule {
 
         // If a swap is required to obtain the repayment tokens
         if (borrow.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
-            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
+            _decodeTokenIn(borrow.swapParams.path);
+            _decodeTokenOut(borrow.swapParams.path);
 
             // Perform a swap to obtain the borrow token using the provided swap parameters
             _swapFlashloanToBorrowToken(
