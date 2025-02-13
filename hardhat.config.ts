@@ -55,10 +55,6 @@ const ETHEREUM_MAINNET_KEYS: string[] = process.env.ETHEREUM_MAINNET_KEYS
 const ETHEREUM_TESTNET_KEYS: string[] = process.env.ETHEREUM_TESTNET_KEYS ?
     process.env.ETHEREUM_TESTNET_KEYS.split(",") : [];
 // See `config.networks`.
-// const POLYGON_MAINNET_KEYS: string[] = process.env.POLYGON_MAINNET_KEYS ?
-//     process.env.POLYGON_MAINNET_KEYS.split(",") : [];
-// const POLYGON_TESTNET_KEYS: string[] = process.env.POLYGON_TESTNET_KEYS ?
-//     process.env.POLYGON_TESTNET_KEYS.split(",") : [];
 
 const CUSTOM_CHAIN_ID = 0;
 const CUSTOM_HTTP_HEADERS = { tokenID: process.env.CUSTOM_HTTP_HEADERS_TOKEN_ID || "" };
@@ -74,6 +70,34 @@ const CUSTOM_HTTP_HEADERS = { tokenID: process.env.CUSTOM_HTTP_HEADERS_TOKEN_ID 
 const ENABLED_OPTIMIZER: boolean = !!process.env.ENABLED_OPTIMIZER || !!process.env.REPORT_GAS || false;
 // `+` to convert to number.
 const OPTIMIZER_RUNS: number = process.env.OPTIMIZER_RUNS ? +process.env.OPTIMIZER_RUNS : 200;
+
+// const FORK_NETWORK = process.env.FORK_NETWORK || "ethereum";
+const FORK_NETWORK = process.env.npm_config_fork_network || "ethereum";
+
+// Object with FORKING URL for each network
+const FORKING_URLS: { [key: string]: string } = {
+    ethereum: process.env.FORKING_ETHEREUM_URL || "",
+    polygon: process.env.FORKING_POLYGON_URL || "",
+    arbitrum: process.env.FORKING_ARBITRUM_URL || "",
+    base: process.env.FORKING_BASE_URL || "",
+    optimism: process.env.FORKING_OPTIMISM_URL || ""
+};
+
+// Determining the URL for forking depending on the network
+const FORKING_URL = FORKING_URLS[FORK_NETWORK] || "";
+
+// Object with FORKING Block Numbers for each network
+const FORKING_BLOCK_NUMBERS: { [key: string]: string | undefined } = {
+    ethereum: process.env.FORKING_ETHEREUM_BLOCK,
+    polygon: process.env.FORKING_POLYGON_BLOCK,
+    arbitrum: process.env.FORKING_ARBITRUM_BLOCK,
+    base: process.env.FORKING_BASE_BLOCK,
+    optimism: process.env.FORKING_OPTIMISM_BLOCK
+};
+
+const FORKING_BLOCK_NUMBER = FORKING_BLOCK_NUMBERS[FORK_NETWORK]
+    ? Number(FORKING_BLOCK_NUMBERS[FORK_NETWORK])
+    : undefined;
 
 const config: HardhatUserConfig = {
     solidity: {
@@ -101,6 +125,20 @@ const config: HardhatUserConfig = {
     defaultNetwork: "hardhat",
     networks: {
         hardhat: {
+            chains: {
+                137: {
+                    hardforkHistory: {
+                        // berlin: 10000000,
+                        london: 20000000
+                    }
+                },
+                8453: {
+                    hardforkHistory: {
+                        // berlin: 10000000,
+                        london: 20000000
+                    }
+                }
+            },
             allowUnlimitedContractSize: !ENABLED_OPTIMIZER,
             accounts: {
                 // Default value: "10000000000000000000000" (100_000 ETH).
@@ -108,12 +146,11 @@ const config: HardhatUserConfig = {
                 // Default value: 20.
                 count: process.env.NUMBER_OF_ACCOUNTS ? +process.env.NUMBER_OF_ACCOUNTS : 20
             },
-            chainId: 1,
             forking: {
-                url: process.env.FORKING_URL || "",
-                enabled: !!process.env.FORKING || false // `!!` to convert to boolean.
-                // blockNumber: 21487073
-            } //,
+                url: FORKING_URL,
+                enabled: !!process.env.FORKING || false, // `!!` to convert to boolean.
+                ...(FORKING_BLOCK_NUMBER ? { blockNumber: FORKING_BLOCK_NUMBER } : {})
+            }
             /*
              * Uncomment the line below if Ethers reports the error
              * "Error: cannot estimate gas; transaction may fail or may require manual gas limit...".
@@ -134,38 +171,18 @@ const config: HardhatUserConfig = {
         },
         // Ethereum:
         mainnet: {
-            url: process.env.ETHEREUM_URL || "",
+            url: FORKING_URL,
             accounts: [...ETHEREUM_MAINNET_KEYS]
-        },
-        goerli: {
-            url: process.env.GOERLI_URL || "",
-            accounts: [...ETHEREUM_TESTNET_KEYS]
-        },
-        avalancheFujiTestnet: {
-            chainId: 43113,
-            url: process.env.AVALANCHE_TESTNET_URL || "",
-            accounts: [process.env.AVALANCHE_TESTNET_KEYS || ""]
-        },
-        bscTestnet: {
-            chainId: 97,
-            url: process.env.BSC_TESTNET_URL || "",
-            accounts: [process.env.BSC_TESTNET_KEYS || ""]
-        },
-        sepolia: {
-            chainId: 11155111,
-            url: process.env.SEPOLIA_URL || "",
-            accounts: [process.env.SEPOLIA_KEYS || ""]
-            // gas: 30000000
         },
         arbitrumOne: {
             chainId: 42161,
-            url: process.env.ARBITRUM_URL || "",
+            url: FORKING_URL,
             accounts: [process.env.ARBITRUM_KEYS || ""]
         },
         polygon: {
             chainId: 80002,
-            url: process.env.POLYGON_TESTNET_URL || "",
-            accounts: [process.env.POLYGON_TESTNET_KEYS || ""]
+            url: FORKING_URL,
+            accounts: [process.env.POLYGON_KEYS || ""]
         },
         localhost: {
             chainId: 1,

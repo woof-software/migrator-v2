@@ -232,19 +232,39 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         bytes calldata migrationData,
         uint256 flashAmount
     ) external validAdapter(adapter) validComet(comet) {
-        if (flashAmount == 0) revert InvalidFlashAmount();
+        // if (flashAmount == 0) revert InvalidFlashAmount();
         if (migrationData.length == 0) revert InvalidMigrationData();
 
-        bytes memory callbackData = abi.encode(msg.sender, adapter, comet, migrationData, flashAmount);
+        address user = msg.sender;
+
+        bytes memory callbackData = abi.encode(user, adapter, comet, migrationData, flashAmount);
 
         FlashData memory flashData = _flashData[comet];
 
-        IUniswapV3Pool(flashData.liquidityPool).flash(
-            address(this),
-            flashData.isToken0 ? flashAmount : 0,
-            flashData.isToken0 ? 0 : flashAmount,
-            callbackData
-        );
+        if (flashAmount != 0) {
+            IUniswapV3Pool(flashData.liquidityPool).flash(
+                address(this),
+                flashData.isToken0 ? flashAmount : 0,
+                flashData.isToken0 ? 0 : flashAmount,
+                callbackData
+            );
+        } else {
+            (bool success, bytes memory result) = adapter.delegatecall(
+                abi.encodeWithSelector(IProtocolAdapter.executeMigration.selector, user, comet, migrationData)
+            );
+
+            if (!success) {
+                if (result.length > 0) {
+                    assembly {
+                        revert(add(32, result), mload(result))
+                    }
+                } else {
+                    revert("Delegatecall failed");
+                }
+            }
+
+            emit MigrationExecuted(adapter, user, comet, 0, 0);
+        }
     }
 
     /**

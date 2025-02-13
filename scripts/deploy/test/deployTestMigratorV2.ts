@@ -14,7 +14,7 @@ const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 // Use the network name to get the config.
 const args = {
     multisig: "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
-    adapters: ["0x96d5e6C5821a384237673A4444ACf6721E4d9E1d"],
+    adapters: ["0xdb83bc921d49Bf73326D7BBA36a8CF8211d62534"],
     comets: [
         "0xA5EDBDD9646f8dFF606d7448e414884C7d905dCA", // Arbitrum - USDC.e Base (Bridged)
         "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf", // Arbitrum - USDC Base (Native)
@@ -23,7 +23,7 @@ const args = {
     ],
     flashData: [
         {
-            liquidityPool: "0x8e295789c9465487074a65b1ae9Ce0351172393f", // USDC / USDC.e
+            liquidityPool: "0x8e295789c9465487074a65b1ae9Ce0351172393f", // USDC / USDC.e 0.01%
             baseToken: "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", // USDC.e
             isToken0: false
         },
@@ -33,7 +33,7 @@ const args = {
             isToken0: true
         },
         {
-            liquidityPool: "0x641C00A822e8b671738d32a431a4Fb6074E5c79d", // WETH / USDT
+            liquidityPool: "0x641C00A822e8b671738d32a431a4Fb6074E5c79d", // WETH / USDT 0.05%
             baseToken: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH
             isToken0: true
         },

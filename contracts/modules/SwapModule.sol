@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {ISwapRouter02} from "../interfaces/@uniswap/v3-periphery/ISwapRouter02.sol";
 import {CommonErrors} from "../errors/CommonErrors.sol";
 
 /**
@@ -98,11 +99,27 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
         if (params.path.length == 0) revert EmptySwapPath();
 
         address tokenOut = _decodeTokenOut(params.path);
-
         _approveTokenForSwap(tokenOut);
 
-        // Perform the swap
-        amountIn = UNISWAP_ROUTER.exactOutput(params);
+        try UNISWAP_ROUTER.exactOutput(params) returns (uint256 returnedAmountIn) {
+            // If the call was successful, we save the result
+            amountIn = returnedAmountIn;
+        } catch {
+            // If calling exactOutput in ISwapRouter is not supported, try ISwapRouter02
+            ISwapRouter02.ExactOutputParams memory params02 = ISwapRouter02.ExactOutputParams({
+                path: params.path,
+                recipient: params.recipient,
+                amountOut: params.amountOut,
+                amountInMaximum: params.amountInMaximum
+            });
+
+            try ISwapRouter02(address(UNISWAP_ROUTER)).exactOutput(params02) returns (uint256 returnedAmountIn02) {
+                amountIn = returnedAmountIn02;
+            } catch {
+                // If both interfaces are not supported, call revert
+                revert("Swap router does not support ISwapRouter or ISwapRouter02");
+            }
+        }
 
         _clearApprove(tokenOut);
     }
@@ -122,11 +139,27 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
         if (params.path.length == 0) revert EmptySwapPath();
 
         address tokenIn = _decodeTokenIn(params.path);
-
         _approveTokenForSwap(tokenIn);
 
-        // Perform the swap
-        amountOut = UNISWAP_ROUTER.exactInput(params);
+        try UNISWAP_ROUTER.exactInput(params) returns (uint256 returnedAmountOut) {
+            // If the call was successful, we save the result
+            amountOut = returnedAmountOut;
+        } catch {
+            // If calling exactInput in ISwapRouter is not supported, try ISwapRouter02
+            ISwapRouter02.ExactInputParams memory params02 = ISwapRouter02.ExactInputParams({
+                path: params.path,
+                recipient: params.recipient,
+                amountIn: params.amountIn,
+                amountOutMinimum: params.amountOutMinimum
+            });
+
+            try ISwapRouter02(address(UNISWAP_ROUTER)).exactInput(params02) returns (uint256 returnedAmountOut02) {
+                amountOut = returnedAmountOut02;
+            } catch {
+                // If both interfaces are not supported, call revert
+                revert("Swap router does not support ISwapRouter or ISwapRouter02");
+            }
+        }
 
         _clearApprove(tokenIn);
     }

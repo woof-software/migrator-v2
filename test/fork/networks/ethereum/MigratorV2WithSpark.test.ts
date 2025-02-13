@@ -15,17 +15,17 @@ import {
 
 import {
     MigratorV2,
-    AaveV3UsdsAdapter,
+    SparkAdapter,
     ERC20__factory,
     IComet__factory,
     ERC20,
-    IAToken__factory,
-    IAToken,
+    ISpToken__factory,
+    ISpToken,
     IDebtToken__factory,
     IDebtToken
 } from "../../../../typechain-types";
 
-import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/contracts";
+import { SparkPool__factory, WETHGateway__factory } from "../../types/contracts";
 
 /**
  *  **Fork Tests: How to Run**
@@ -35,14 +35,14 @@ import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/c
  *  **Running Fork Tests**
  *    - The main command to execute a fork test:
  *      ```sh
- *      npm run test-f-aave --fork-network=ethereum
+ *      npm run test-f-spark --fork-network=ethereum
  *      ```
  *
  *  **Enabling Debug Logs**
- *    - To display additional debug logs (collateral balances and borrow positions before and after migration),
+ *    - To display additional debug logs (collateral balances and borrow positions before and after migration),  
  *      add the `--debug-log=true` flag:
  *      ```sh
- *      npm run test-f-aave --debug-log=true --fork-network=ethereum
+ *      npm run test-f-spark --debug-log=true --fork-network=ethereum
  *      ```
  *
  *  **How Fork Tests Work**
@@ -56,16 +56,17 @@ import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/c
 
 // Convert fee to 3-byte hex
 const FEE_3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(3000), 3); // 0.3%
+const FEE_500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(500), 3); // 0.05%
 const FEE_100 = ethers.utils.hexZeroPad(ethers.utils.hexlify(100), 3); // 0.01%
-
-const POSITION_ABI = [
-    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
-];
 
 const SLIPPAGE_BUFFER_PERCENT = 115; // 15% slippage buffer
 
-describe("MigratorV2 and AaveV3Adapter contracts", function () {
+const POSITION_ABI = [
+    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address spToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+];
+
+describe("MigratorV2 and SparkAdapter contracts", function () {
     async function setupEnv() {
         const [owner, user] = await ethers.getSigners();
         console.log("Network:", process.env.npm_config_fork_network || "not set");
@@ -78,7 +79,10 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             USDT: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             USDS: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
             WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+            GNO: "0x6810e776880C02933D47DB1b9fc05908e5386b96",
+            wstETH: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
+            cbBTC: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+            sDAI: "0x83F20F44975D03b1b09e64809B757c47f942BEeA"
         };
 
         const treasuryAddresses: Record<string, string> = {
@@ -88,31 +92,40 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             USDT: "0xF977814e90dA44bFA03b6295A0616a897441aceC",
             USDS: "0x1AB4973a48dc892Cd9971ECE8e01DcC7688f8F23",
             WETH: "0x8EB8a3b98659Cce290402893d0123abb75E3ab28",
-            LINK: "0xF977814e90dA44bFA03b6295A0616a897441aceC"
+            GNO: "0x70e278941eD3C0D2c6D6105df184831992ACA856",
+            wstETH: "0xacB7027f271B03B502D65fEBa617a0d817D62b8e",
+            cbBTC: "0x698C1f4c8db11629fDC913F54A6dC44a9166F187",
+            sDAI: "0x15a8B2ceA2D8f48c150f2EC7be07808c54355Bc7"
         };
 
-        const aaveContractAddresses = {
-            aToken: {
-                WBTC: "0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8",
-                DAI: "0x018008bfb33d285247A21d44E50697654f754e63",
-                USDC: "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c",
-                USDT: "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
-                USDS: "0x32a6268f9Ba3642Dda7892aDd74f1D34469A4259",
-                WETH: "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8",
-                LINK: "0x5E8C8A7243651DB1384C0dDfDbE39761E8e7E51a"
+        const sparkContractAddresses = {
+            spToken: {
+                WBTC: "0x4197ba364AE6698015AE5c1468f54087602715b2",
+                DAI: "0x4DEDf26112B3Ec8eC46e7E31EA5e123490B05B8B",
+                USDC: "0x377C3bd93f2a2984E1E7bE6A5C22c525eD4A4815",
+                USDT: "0xe7dF13b8e3d6740fe17CBE928C7334243d86c92f",
+                USDS: "0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359",
+                WETH: "0x59cD1C87501baa753d0B5B5Ab5D8416A45cD71DB",
+                GNO: "0x7b481aCC9fDADDc9af2cBEA1Ff2342CB1733E50F",
+                wstETH: "0x12B54025C112Aa61fAce2CDB7118740875A566E9",
+                cbBTC: "0xb3973D459df38ae57797811F2A1fd061DA1BC123",
+                sDAI: "0x78f897F0fE2d3B5690EbAe7f19862DEacedF10a7"
             },
             variableDebtToken: {
-                WBTC: "0x40aAbEf1aa8f0eEc637E0E7d92fbfFB2F26A8b7B",
-                DAI: "0xcF8d0c70c850859266f5C338b38F9D663181C314",
-                USDC: "0x72E95b8931767C79bA4EeE721354d6E99a61D004",
-                USDT: "0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8",
-                USDS: "0x490E0E6255bF65b43E2e02F7acB783c5e04572Ff",
-                WETH: "0xeA51d7853EEFb32b6ee06b1C12E6dcCA88Be0fFE",
-                LINK: "0x4228F8895C7dDA20227F6a5c6751b8Ebf19a6ba8"
+                WBTC: "0xf6fEe3A8aC8040C3d6d81d9A4a168516Ec9B51D2",
+                DAI: "0xf705d2B7e92B3F38e6ae7afaDAA2fEE110fE5914",
+                USDC: "0x7B70D04099CB9cfb1Db7B6820baDAfB4C5C70A67",
+                USDT: "0x529b6158d1D2992E3129F7C69E81a7c677dc3B12",
+                USDS: "0x8c147debea24Fb98ade8dDa4bf142992928b449e",
+                WETH: "0x2e7576042566f8D6990e07A1B61Ad1efd86Ae70d",
+                GNO: "0x57a2957651DA467fCD4104D749f2F3684784c25a",
+                wstETH: "0xd5c3E3B566a42A6110513Ac7670C1a86D76E13E6",
+                cbBTC: "0x661fE667D2103eb52d3632a3eB2cAbd123F27938",
+                sDAI: "0xaBc57081C04D921388240393ec4088Aa47c6832B"
             },
-            pool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
-            protocolDataProvider: "0x41393e5e337606dc3821075Af65AeE84D7688CBD",
-            wrappedTokenGateway: "0xA434D495249abE33E031Fe71a969B81f3c07950D"
+            pool: "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
+            protocolDataProvider: "0xFc21d6d146E6086B8359705C8b28512a983db0cb",
+            wrappedTokenGateway: "0xBD7D6a9ad7865463DE44B05F04559f65e3B11704"
         };
 
         // convertor Dai to Usds address
@@ -146,34 +159,34 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             )
         );
 
-        const aTokenContracts: Record<string, IAToken> = Object.fromEntries(
-            Object.entries(aaveContractAddresses.aToken).map(([symbol, address]) => [
+        const aTokenContracts: Record<string, ISpToken> = Object.fromEntries(
+            Object.entries(sparkContractAddresses.spToken).map(([symbol, address]) => [
                 symbol,
-                IAToken__factory.connect(address, user)
+                ISpToken__factory.connect(address, user)
             ])
         );
 
         const debtTokenContracts: Record<string, IDebtToken> = Object.fromEntries(
-            Object.entries(aaveContractAddresses.variableDebtToken).map(([symbol, address]) => [
+            Object.entries(sparkContractAddresses.variableDebtToken).map(([symbol, address]) => [
                 symbol,
                 IDebtToken__factory.connect(address, user)
             ])
         );
 
-        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3UsdsAdapter", owner);
-        const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
+        const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", owner);
+        const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy({
             uniswapRouter: uniswapContractAddresses.router,
             daiUsdsConverter: daiUsdsAddress,
             dai: tokenAddresses.DAI,
             usds: tokenAddresses.USDS,
             wrappedNativeToken: tokenAddresses.WETH,
-            aaveLendingPool: aaveContractAddresses.pool,
-            aaveDataProvider: aaveContractAddresses.protocolDataProvider,
+            sparkLendingPool: sparkContractAddresses.pool,
+            sparkDataProvider: sparkContractAddresses.protocolDataProvider,
             isFullMigration: true
-        })) as AaveV3UsdsAdapter;
-        await aaveV3Adapter.deployed();
+        })) as SparkAdapter;
+        await sparkAdapter.deployed();
 
-        const adapters = [aaveV3Adapter.address];
+        const adapters = [sparkAdapter.address];
         const comets = [compoundContractAddresses.markets.cUSDCv3, compoundContractAddresses.markets.cUSDSv3];
 
         // Set up flashData for migrator
@@ -202,12 +215,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
         expect(migratorV2.address).to.be.properAddress;
 
         // Connecting to all necessary contracts for testing
-        const aaveV3Pool = AavePool__factory.connect(aaveContractAddresses.pool, user);
+        const sparkPool = SparkPool__factory.connect(sparkContractAddresses.pool, user);
 
-        const wrappedTokenGateway = WrappedTokenGatewayV3__factory.connect(
-            aaveContractAddresses.wrappedTokenGateway,
-            user
-        );
+        const wrappedTokenGateway = WETHGateway__factory.connect(sparkContractAddresses.wrappedTokenGateway, user);
 
         const cUSDCv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDCv3, user);
         const cUSDSv3Contract = IComet__factory.connect(compoundContractAddresses.markets.cUSDSv3, user);
@@ -219,15 +229,15 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             tokenAddresses,
             tokenContracts,
             tokenDecimals,
-            aaveContractAddresses,
+            sparkContractAddresses,
             aTokenContracts,
             debtTokenContracts,
             uniswapContractAddresses,
             compoundContractAddresses,
             daiUsdsAddress,
-            aaveV3Adapter,
+            sparkAdapter,
             migratorV2,
-            aaveV3Pool,
+            sparkPool,
             wrappedTokenGateway,
             cUSDCv3Contract,
             cUSDSv3Contract
@@ -242,20 +252,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
-                wrappedTokenGateway,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
+                cbBTC: parseUnits("0.03", tokenDecimals.cbBTC), // ~ 2950 USD
                 USDT: parseUnits("300", tokenDecimals.USDT)
             };
             // --- start
@@ -273,37 +282,42 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // --- end
 
             // setup the collateral and borrow positions in AaveV3
+
             const interestRateMode = 2; // variable
             const referralCode = 0;
 
-            // total supply amount equivalent to 1385 USD
+            // total supply amount equivalent to 3380 USD
             const supplyAmounts = {
                 ETH: parseEther("0.05"), // 130 USD
-                WBTC: fundingData.WBTC, // 955 USD
+                cbBTC: fundingData.cbBTC, // 2950 USD
                 USDT: fundingData.USDT // 300 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                // supply ETH as collateral
                 if (token === "ETH") {
-                    await wrappedTokenGateway.depositETH(aaveV3Pool.address, user.address, referralCode, {
+                    // supply ETH as collateral
+                    const wrappedTokenGateway = WETHGateway__factory.connect(
+                        sparkContractAddresses.wrappedTokenGateway,
+                        user
+                    );
+                    await wrappedTokenGateway.depositETH(sparkPool.address, user.address, referralCode, {
                         value: supplyAmounts.ETH
                     });
                 } else {
-                    await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                    await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                    await tokenContracts[token].approve(sparkPool.address, amount);
+                    await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
                 }
             }
 
-            // total borrow amount equivalent to 435 USD
+            // total borrow amount equivalent to 1420 USD
             const borrowAmounts = {
                 USDC: parseUnits("100", tokenDecimals.USDC), // ~100 USD
-                DAI: parseUnits("70", tokenDecimals.DAI), // ~70 USD
-                LINK: parseUnits("15", tokenDecimals.LINK) // ~265 USD
+                DAI: parseUnits("700", tokenDecimals.DAI), // ~700 USD
+                wstETH: parseUnits("0.2", tokenDecimals.wstETH) // ~620 USD
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -322,17 +336,17 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const userBalancesBefore = {
                 collateralsAave: {
                     ETH: await aTokenContracts.WETH.balanceOf(user.address),
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDT: await aTokenContracts.USDT.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address),
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
-                    LINK: await debtTokenContracts.LINK.balanceOf(user.address)
+                    wstETH: await debtTokenContracts.wstETH.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC),
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC),
                     WETH: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
                 }
             };
@@ -342,7 +356,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.USDC,
+                        debtToken: sparkContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -350,7 +364,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.DAI,
+                        debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -358,41 +372,43 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_100,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountInMaximum: parseUnits("70", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            amountInMaximum: parseUnits("700", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     },
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.LINK,
+                        debtToken: sparkContractAddresses.variableDebtToken.wstETH,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.LINK, 20),
-                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.wstETH, 20),
+                                FEE_100,
+                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                                FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountInMaximum: parseUnits("265", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            amountInMaximum: parseUnits("620", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WETH,
+                        spToken: sparkContractAddresses.spToken.WETH,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
                                 ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
-                                FEE_3000,
+                                FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             amountOutMinimum: 0
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
@@ -400,7 +416,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.USDT,
+                        spToken: sparkContractAddresses.spToken.USDT,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -420,35 +436,35 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("435", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+            const flashAmount = parseUnits("1420", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
 
             await expect(
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsAave: {
                     ETH: await aTokenContracts.WETH.balanceOf(user.address),
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDT: await aTokenContracts.USDT.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address),
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
-                    LINK: await debtTokenContracts.LINK.balanceOf(user.address)
+                    wstETH: await debtTokenContracts.wstETH.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC),
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC),
                     WETH: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
                 }
             };
@@ -458,39 +474,39 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
-            expect(userBalancesAfter.borrowAave.LINK).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave.wstETH).to.be.equal(Zero);
             //all collaterals should be migrated
-            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.cbBTC).to.be.equal(Zero);
             expect(userBalancesAfter.collateralsAave.USDT).to.be.equal(Zero);
             expect(userBalancesAfter.collateralsAave.ETH).to.be.equal(Zero);
             // all collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
-        it("Scn.#2: partial collateral migration (by asset types)| three collateral and three borrow tokens | only swaps (borrow pos.)", async function () {
+        it("Scn.#2: partial collateral migration (by asset types)| three collateral and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
             const {
                 user,
                 treasuryAddresses,
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WETH: parseEther("0.05"), // 130 USD
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
-                USDT: parseUnits("300", tokenDecimals.USDT)
+                WETH: parseEther("0.5"), // ~ 1350 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC), // ~ 955 USD
+                USDT: parseUnits("300", tokenDecimals.USDT) // ~ 300 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -507,34 +523,35 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // --- end
 
             // setup the collateral and borrow positions in AaveV3
+
             const interestRateMode = 2; // variable
             const referralCode = 0;
 
-            // total supply amount equivalent to 1385 USD
+            // total supply amount equivalent to 2605 USD
             const supplyAmounts = {
-                WETH: fundingData.WETH, // 130 USD
-                WBTC: fundingData.WBTC, // 955 USD
-                USDT: fundingData.USDT // 300 USD
+                WETH: fundingData.WETH, // ~1350 USD
+                cbBTC: fundingData.cbBTC, // ~955 USD
+                USDT: fundingData.USDT // ~300 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
-            // total borrow amount equivalent to 625 USD
+            // total borrow amount equivalent to 480 USD
             const borrowAmounts = {
-                USDC: parseUnits("100", tokenDecimals.USDC),
-                DAI: parseUnits("70", tokenDecimals.DAI),
-                LINK: parseUnits("30", tokenDecimals.LINK) // ~555 USD
+                USDC: parseUnits("100", tokenDecimals.USDC), // ~100 USD
+                DAI: parseUnits("70", tokenDecimals.DAI), // ~70 USD
+                wstETH: parseUnits("0.1", tokenDecimals.wstETH) // ~310 USD
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
-            await aTokenContracts.WBTC.approve(migratorV2.address, MaxUint256);
+            await aTokenContracts.cbBTC.approve(migratorV2.address, MaxUint256);
 
             // set allowance for migrator to spend cUSDCv3
             await cUSDCv3Contract.allow(migratorV2.address, true);
@@ -542,18 +559,18 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralsAave: {
-                    ETH: await aTokenContracts.WETH.balanceOf(user.address),
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                    WETH: await aTokenContracts.WETH.balanceOf(user.address),
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDT: await aTokenContracts.USDT.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address),
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
-                    LINK: await debtTokenContracts.LINK.balanceOf(user.address)
+                    wstETH: await debtTokenContracts.wstETH.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC),
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC),
                     WETH: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
                 }
             };
@@ -563,21 +580,23 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.LINK,
+                        debtToken: sparkContractAddresses.variableDebtToken.wstETH,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.LINK, 20),
-                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.wstETH, 20),
+                                FEE_100,
+                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                                FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountInMaximum: parseUnits("555", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            amountInMaximum: parseUnits("310", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -593,35 +612,35 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 [[position.borrows, position.collaterals]]
             );
 
-            const flashAmount = parseUnits("555", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+            const flashAmount = parseUnits("310", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
 
             await expect(
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsAave: {
-                    ETH: await aTokenContracts.WETH.balanceOf(user.address),
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                    WETH: await aTokenContracts.WETH.balanceOf(user.address),
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDT: await aTokenContracts.USDT.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address),
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
-                    LINK: await debtTokenContracts.LINK.balanceOf(user.address)
+                    wstETH: await debtTokenContracts.wstETH.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC),
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC),
                     WETH: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
                 }
             };
@@ -631,13 +650,13 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.not.equal(Zero);
             expect(userBalancesAfter.borrowAave.USDC).to.be.not.equal(Zero);
-            expect(userBalancesAfter.borrowAave.LINK).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave.wstETH).to.be.equal(Zero);
             //all collaterals should be migrated
-            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.cbBTC).to.be.equal(Zero);
             expect(userBalancesAfter.collateralsAave.USDT).to.be.not.equal(Zero);
-            expect(userBalancesAfter.collateralsAave.ETH).to.be.not.equal(Zero);
-            // all collaterals from Aave should be migrated to Comet as WBTC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.above(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsAave.WETH).to.be.not.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as cbBTC
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.above(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.equal(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -648,20 +667,20 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 wrappedTokenGateway,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC), // ~ 955 USD
                 USDT: parseUnits("300", tokenDecimals.USDT)
             };
             // --- start
@@ -679,18 +698,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // --- end
 
             // setup the collateral and borrow positions in AaveV3
+
             const interestRateMode = 2; // variable
             const referralCode = 0;
 
             // total supply amount equivalent to 1385 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC, // 955 USD
+                cbBTC: fundingData.cbBTC, // 955 USD
                 USDT: fundingData.USDT // 300 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 200 USD
@@ -700,20 +720,13 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                // supply ETH as collateral
                 if (token === "ETH") {
                     // approve delegation of ETH to WrappedTokenGateway contract
                     await debtTokenContracts.WETH.approveDelegation(wrappedTokenGateway.address, MaxUint256);
 
-                    await wrappedTokenGateway.borrowETH(aaveV3Pool.address, amount, referralCode);
+                    await wrappedTokenGateway.borrowETH(sparkPool.address, amount, interestRateMode, referralCode);
                 } else {
-                    await aaveV3Pool.borrow(
-                        tokenAddresses[token],
-                        amount,
-                        interestRateMode,
-                        referralCode,
-                        user.address
-                    );
+                    await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
                 }
             }
 
@@ -728,7 +741,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralsAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDT: await aTokenContracts.USDT.balanceOf(user.address)
                 },
                 borrowAave: {
@@ -737,7 +750,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -746,7 +759,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.DAI,
+                        debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -758,7 +771,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.WETH,
+                        debtToken: sparkContractAddresses.variableDebtToken.WETH,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -772,11 +785,11 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
@@ -784,7 +797,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.USDT,
+                        spToken: sparkContractAddresses.spToken.USDT,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -810,18 +823,18 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDT: await aTokenContracts.USDT.balanceOf(user.address)
                 },
                 borrowAave: {
@@ -830,7 +843,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -840,10 +853,10 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
             expect(userBalancesAfter.borrowAave.ETH).to.be.equal(Zero);
             //all collaterals should be migrated
-            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.cbBTC).to.be.equal(Zero);
             expect(userBalancesAfter.collateralsAave.USDT).to.be.equal(Zero);
             // all collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -854,19 +867,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC) // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC) // ~ 955 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -888,12 +901,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC // 955 USD
+                cbBTC: fundingData.cbBTC // 955 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 250 USD
@@ -902,7 +915,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -916,14 +929,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -932,7 +945,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.USDC,
+                        debtToken: sparkContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -942,7 +955,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -964,25 +977,25 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -991,10 +1004,10 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
             // collateral should be migrated
-            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
-            // collaterals from Aave should be migrated to Comet as WBTC
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
+            // collaterals from Aave should be migrated to Comet as cbBTC
             expect(userBalancesAfter.collateralsComet.USDC).to.be.equal(userBalancesBefore.collateralsComet.USDC);
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.above(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.above(userBalancesBefore.collateralsComet.cbBTC);
         }).timeout(0);
 
         it("Scn.#5: migration of all collaterals | one collateral and one borrow tokens | only swaps (borrow pos.)", async function () {
@@ -1004,19 +1017,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC) // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC) // ~ 955 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -1038,12 +1051,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC // 955 USD
+                cbBTC: fundingData.cbBTC // 955 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 150 USD
@@ -1052,7 +1065,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -1066,14 +1079,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1082,7 +1095,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.DAI,
+                        debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -1096,7 +1109,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1118,25 +1131,25 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1145,10 +1158,10 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
             // collateral should be migrated
-            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
-            // collaterals from Aave should be migrated to Comet as WBTC
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
+            // collaterals from Aave should be migrated to Comet as cbBTC
             expect(userBalancesAfter.collateralsComet.USDC).to.be.equal(userBalancesBefore.collateralsComet.USDC);
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.above(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.above(userBalancesBefore.collateralsComet.cbBTC);
         }).timeout(0);
 
         it("Scn.#6: migration of all collaterals | one collateral and two borrow tokens | only swaps (borrow pos.)", async function () {
@@ -1158,19 +1171,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC) // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC) // ~ 955 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -1192,12 +1205,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC // 955 USD
+                cbBTC: fundingData.cbBTC // 955 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 115 USD
@@ -1207,7 +1220,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -1221,7 +1234,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
@@ -1229,7 +1242,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1238,7 +1251,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.DAI,
+                        debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -1250,7 +1263,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.USDC,
+                        debtToken: sparkContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1260,7 +1273,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1282,18 +1295,18 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
@@ -1301,7 +1314,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1311,10 +1324,10 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
             // collateral should be migrated
-            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
-            // collaterals from Aave should be migrated to Comet as WBTC
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
+            // collaterals from Aave should be migrated to Comet as cbBTC
             expect(userBalancesAfter.collateralsComet.USDC).to.be.equal(userBalancesBefore.collateralsComet.USDC);
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.above(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.above(userBalancesBefore.collateralsComet.cbBTC);
         }).timeout(0);
 
         it("Scn.#7: migration of all collaterals | one collateral and one borrow tokens | only swaps (coll. & barrow pos.)", async function () {
@@ -1324,19 +1337,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC) // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC) // ~ 955 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -1358,12 +1371,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC // 955 USD
+                cbBTC: fundingData.cbBTC // 955 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 115 USD
@@ -1372,7 +1385,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -1386,14 +1399,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1402,7 +1415,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.DAI,
+                        debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -1416,11 +1429,11 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
@@ -1442,25 +1455,25 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1469,9 +1482,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
             // collateral should be migrated
-            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -1482,19 +1495,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC) // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC) // ~ 955 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -1516,12 +1529,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 955 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC // 955 USD
+                cbBTC: fundingData.cbBTC // 955 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 115 USD
@@ -1530,7 +1543,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -1544,14 +1557,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1560,7 +1573,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.USDC,
+                        debtToken: sparkContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1570,11 +1583,11 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
@@ -1596,25 +1609,25 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1623,9 +1636,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
             // collateral should be migrated
-            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -1636,19 +1649,19 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC), // ~ 955 USD
                 USDT: parseUnits("100", tokenDecimals.USDT)
             };
             // --- start
@@ -1671,13 +1684,13 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC, // 955 USD
+                cbBTC: fundingData.cbBTC, // 955 USD
                 USDT: fundingData.USDT // 100 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // total borrow amount equivalent to 115 USD
@@ -1686,7 +1699,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
             // Approve migration
@@ -1700,14 +1713,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             const userBalancesBefore = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1716,7 +1729,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             const position = {
                 borrows: [
                     {
-                        debtToken: aaveContractAddresses.variableDebtToken.USDC,
+                        debtToken: sparkContractAddresses.variableDebtToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1726,11 +1739,11 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 ],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
@@ -1738,7 +1751,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.USDT,
+                        spToken: sparkContractAddresses.spToken.USDT,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -1764,25 +1777,25 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 borrowAave: {
                     USDC: await debtTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1791,9 +1804,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
             // collateral should be migrated
-            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -1804,18 +1817,18 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC), // ~ 955 USD
                 USDC: parseUnits("100", tokenDecimals.USDC)
             };
             // --- start
@@ -1837,13 +1850,13 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC, // 955 USD
+                cbBTC: fundingData.cbBTC, // 955 USD
                 USDC: fundingData.USDC // 100 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // Approve migration
@@ -1856,13 +1869,13 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
             const userBalancesBefore = {
-                collateralsAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                collateralAave: {
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDC: await aTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -1872,7 +1885,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 borrows: [],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1880,7 +1893,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.USDC,
+                        spToken: sparkContractAddresses.spToken.USDC,
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
@@ -1902,33 +1915,33 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
-                collateralsAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
+                collateralAave: {
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address),
                     USDC: await aTokenContracts.USDC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
             log("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
-            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
-            expect(userBalancesAfter.collateralsAave.USDC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.USDC).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.above(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.above(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -1939,18 +1952,18 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
             const fundingData = {
-                WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
+                cbBTC: parseUnits("0.01", tokenDecimals.cbBTC), // ~ 955 USD
                 USDT: parseUnits("100", tokenDecimals.USDT)
             };
             // --- start
@@ -1972,13 +1985,13 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             // total supply amount equivalent to 1055 USD
             const supplyAmounts = {
-                WBTC: fundingData.WBTC, // 955 USD
+                cbBTC: fundingData.cbBTC, // 955 USD
                 USDT: fundingData.USDT // 100 USD
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // Approve migration
@@ -1991,13 +2004,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
             const userBalancesBefore = {
-                collateralsAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
-                    USDT: await aTokenContracts.USDT.balanceOf(user.address)
+                collateralAave: {
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
@@ -2007,11 +2019,11 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 borrows: [],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
@@ -2019,7 +2031,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.USDT,
+                        spToken: sparkContractAddresses.spToken.USDT,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -2045,33 +2057,31 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
-                collateralsAave: {
-                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
-                    USDT: await aTokenContracts.USDT.balanceOf(user.address)
+                collateralAave: {
+                    cbBTC: await aTokenContracts.cbBTC.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
-                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC)
                 }
             };
 
             log("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
-            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
-            expect(userBalancesAfter.collateralsAave.USDT).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDC
-            expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
@@ -2082,12 +2092,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDCv3Contract
             } = await loadFixture(setupEnv);
 
@@ -2120,8 +2130,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // Approve migration
@@ -2134,7 +2144,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
 
             const userBalancesBefore = {
-                collateralsAave: {
+                collateralAave: {
                     WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
                     DAI: await aTokenContracts.DAI.balanceOf(user.address)
                 },
@@ -2150,7 +2160,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 borrows: [],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.WBTC,
+                        spToken: sparkContractAddresses.spToken.WBTC,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -2162,7 +2172,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         }
                     },
                     {
-                        aToken: aaveContractAddresses.aToken.DAI,
+                        spToken: sparkContractAddresses.spToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -2190,17 +2200,17 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
-                collateralsAave: {
+                collateralAave: {
                     WBTC: await aTokenContracts.WBTC.balanceOf(user.address),
                     DAI: await aTokenContracts.DAI.balanceOf(user.address)
                 },
@@ -2213,8 +2223,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             log("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
-            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
-            expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralAave.DAI).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDC
             expect(userBalancesAfter.collateralsComet.WBTC).to.be.equal(userBalancesBefore.collateralsComet.WBTC);
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
@@ -2227,12 +2237,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 tokenAddresses,
                 tokenContracts,
                 tokenDecimals,
-                aaveContractAddresses,
+                sparkContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                sparkAdapter,
                 migratorV2,
-                aaveV3Pool,
+                sparkPool,
                 cUSDSv3Contract
             } = await loadFixture(setupEnv);
 
@@ -2263,8 +2273,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             };
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
-                await tokenContracts[token].approve(aaveV3Pool.address, amount);
-                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                await tokenContracts[token].approve(sparkPool.address, amount);
+                await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             // Approve migration
@@ -2291,7 +2301,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 borrows: [],
                 collaterals: [
                     {
-                        aToken: aaveContractAddresses.aToken.DAI,
+                        spToken: sparkContractAddresses.spToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
                             path: ethers.utils.concat([
@@ -2316,14 +2326,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        sparkAdapter.address,
                         compoundContractAddresses.markets.cUSDSv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDSv3Contract.address, Zero, Zero);
+                .withArgs(sparkAdapter.address, user.address, cUSDSv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
                 collateralsAave: {

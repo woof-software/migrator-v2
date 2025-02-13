@@ -21,26 +21,26 @@ The migration process involves repaying user debts, migrating collaterals, and r
 
 This project uses **Hardhat** as the development environment and **npm** as the package manager. To initialize the project, follow these steps:
 
-### 1️⃣ Clone the Repository
+###  Clone the Repository
 
 ```bash
 git clone https://github.com/your-username/migrator-v2.git
 cd migrator-v2
 ```
 
-### 2️⃣ Install Dependencies
+###  Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 3️⃣ Compile the Contracts
+###  Compile the Contracts
 
 ```bash
 npx hardhat compile
 ```
 
-### 4️⃣ Run Tests
+###  Run Tests
 
 ```bash
 npx hardhat test
@@ -65,15 +65,15 @@ npx hardhat run scripts/deploy.js --network your-network-name
 
 ## 📝 Contract Overview
 
-### 1️⃣ **MigratorV2**
+###  **MigratorV2**
 
 The `MigratorV2` contract serves as the main entry point for users to initiate a position migration. It uses **Uniswap V3 flash loans** to acquire liquidity for repaying user debts on the source protocol. After the debt is repaid, the user’s collateral is withdrawn and migrated to Compound III. New protocols can be added by registering new protocol adapters.
 
-### 2️⃣ **BaseAdapter**
+###  **BaseAdapter**
 
 The `BaseAdapter` contract contains shared logic for protocol-specific adapters. It includes methods for **DAI <-> USDS conversions**, **token wrapping/unwrapping** (like ETH <-> WETH), and shared helper functions used by protocol adapters.
 
-### 3️⃣ **AaveV3Adapter**
+###  **AaveV3Adapter**
 
 The `AaveV3Adapter` inherits from `BaseAdapter` and provides specific logic for migrating user positions from **Aave V3** to **Compound III**. It implements all the necessary logic to **repay Aave V3 debts**, **withdraw user collateral**, and **resupply it to Compound III**.
 

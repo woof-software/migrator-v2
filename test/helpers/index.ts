@@ -8,19 +8,21 @@ import {
     stopImpersonatingAccount,
     setBalance
 } from "@nomicfoundation/hardhat-network-helpers";
+
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
-import { anyUint } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
+import { anyUint, anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { BigNumber } from "ethers";
 
-const { Zero, One, AddressZero, HashZero, MaxUint256 } = ethers.constants;
+if (!process.env.npm_config_debug_log) {
+    import("dotenv").then((dotenv) => dotenv.config());
+}
 
-const parseEther = ethers.utils.parseEther;
-const parseUnits = ethers.utils.parseUnits;
-const formatEther = ethers.utils.formatEther;
-const formatUnits = ethers.utils.formatUnits;
-const solidityPack = ethers.utils.solidityPack;
+const { Zero, One, AddressZero, HashZero, MaxUint256 } = ethers.constants;
+const { parseEther, parseUnits, formatEther, formatUnits, solidityPack } = ethers.utils;
+
+export const log = (...args: any[]) => process.env.npm_config_debug_log === "true" && console.log("[DEBUG]", ...args);
 
 export {
     SnapshotRestorer,
@@ -44,6 +46,7 @@ export {
     mine,
     setBalance,
     anyUint,
+    anyValue,
     impersonateAccount,
     stopImpersonatingAccount
 };

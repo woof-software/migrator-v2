@@ -5,7 +5,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IAavePool} from "../interfaces/aave/IAavePool.sol";
 import {IAavePoolDataProvider} from "../interfaces/aave/IAavePoolDataProvider.sol";
-import {IADebtToken} from "../interfaces/aave/IADebtToken.sol";
+import {IWrappedTokenGatewayV3} from "../interfaces/aave/IWrappedTokenGatewayV3.sol";
+import {IDebtToken} from "../interfaces/aave/IDebtToken.sol";
 import {IAToken} from "../interfaces/aave/IAToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
@@ -52,11 +53,11 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
 
     /**
      * @notice Structure representing an individual borrow position in Aave V3
-     * @dev aDebtToken Address of the Aave V3 variable debt token
+     * @dev debtToken Address of the Aave V3 variable debt token
      * @dev amount Amount of debt to repay; use `type(uint256).max` to repay all
      */
     struct AaveV3Borrow {
-        address aDebtToken;
+        address debtToken;
         uint256 amount;
         SwapInputLimitParams swapParams;
     }
@@ -123,8 +124,11 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         SwapModule(deploymentParams.uniswapRouter)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
-        if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
-            revert InvalidZeroAddress();
+        if (
+            deploymentParams.aaveLendingPool == address(0) ||
+            deploymentParams.wrappedNativeToken == address(0) ||
+            deploymentParams.aaveDataProvider == address(0)
+        ) revert InvalidZeroAddress();
 
         LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
         DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
@@ -165,7 +169,7 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     function repayBorrow(address user, AaveV3Borrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
-            ? IERC20(borrow.aDebtToken).balanceOf(user)
+            ? IERC20(borrow.debtToken).balanceOf(user)
             : borrow.amount;
 
         // If a swap is required to obtain the repayment tokens
@@ -191,17 +195,17 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         }
 
         // Get the underlying asset address of the debt token
-        address underlyingAsset = IADebtToken(borrow.aDebtToken).UNDERLYING_ASSET_ADDRESS();
+        address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Aave Lending Pool to spend the repayment amount
-        IADebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
-        // IADebtToken(underlyingAsset).approve(address(LENDING_POOL), type(uint256).max);
+        IDebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
+        // IDebtToken(underlyingAsset).approve(address(LENDING_POOL), type(uint256).max);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
 
         // Check if the debt for the collateral token has been successfully cleared
-        if (IS_FULL_MIGRATION && !_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.aDebtToken);
+        if (IS_FULL_MIGRATION && !_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.debtToken);
     }
 
     /**

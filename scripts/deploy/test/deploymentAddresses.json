@@ -33,8 +33,13 @@
                 "chainId": 42161
             },
             "TestMigratorV2": {
-                "address": "0x70395912F72861FD42cA33Ce671bC936E5f29dCF",
-                "deployedBlock": 297851979,
+                "address": "0xab185b643FF5e46eF0699bdD0AbF33Bf2552B216",
+                "deployedBlock": 304615663,
+                "chainId": 42161
+            },
+            "TestAaveV3Adapter": {
+                "address": "0xdb83bc921d49Bf73326D7BBA36a8CF8211d62534",
+                "deployedBlock": 304614911,
                 "chainId": 42161
             }
         }

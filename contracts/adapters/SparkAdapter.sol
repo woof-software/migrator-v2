@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {ISparkPool} from "../interfaces/spark/ISparkPool.sol";
 import {ISparkPoolDataProvider} from "../interfaces/spark/ISparkPoolDataProvider.sol";
-import {ISpDebtToken} from "../interfaces/spark/ISpDebtToken.sol";
+import {IDebtToken} from "../interfaces/spark/IDebtToken.sol";
 import {ISpToken} from "../interfaces/spark/ISpToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
@@ -52,11 +52,11 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, ConvertModule {
 
     /**
      * @notice Structure representing an individual borrow position in Spark
-     * @dev spDebtToken Address of the Spark variable debt token
+     * @dev debtToken Address of the Spark variable debt token
      * @dev amount Amount of debt to repay; use `type(uint256).max` to repay all
      */
     struct SparkBorrow {
-        address spDebtToken;
+        address debtToken;
         uint256 amount;
         SwapInputLimitParams swapParams;
     }
@@ -167,7 +167,7 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     function repayBorrow(address user, SparkBorrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
-            ? IERC20(borrow.spDebtToken).balanceOf(user)
+            ? IERC20(borrow.debtToken).balanceOf(user)
             : borrow.amount;
 
         // If a swap is required to obtain the repayment tokens
@@ -193,16 +193,16 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         }
 
         // Get the underlying asset address of the debt token
-        address underlyingAsset = ISpDebtToken(borrow.spDebtToken).UNDERLYING_ASSET_ADDRESS();
+        address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Spark Lending Pool to spend the repayment amount
-        ISpDebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
+        IDebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
 
         // Check if the debt for the collateral token has been successfully cleared
-        if (IS_FULL_MIGRATION && !_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.spDebtToken);
+        if (IS_FULL_MIGRATION && !_isDebtCleared(user, underlyingAsset)) revert DebtNotCleared(borrow.debtToken);
     }
 
     /**
