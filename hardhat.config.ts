@@ -47,18 +47,9 @@ import "solidity-docgen"; // The tool by OpenZeppelin to generate documentation 
  * Setting in `.env` file.
  */
 // prettier-ignore
-const CUSTOM_KEYS: string[] = process.env.CUSTOM_KEYS ? process.env.CUSTOM_KEYS.split(",") : [];
-const ETHEREUM_MAINNET_KEYS: string[] = process.env.ETHEREUM_MAINNET_KEYS
-    ? process.env.ETHEREUM_MAINNET_KEYS.split(",")
+const MAINNET_KEYS: string[] = process.env.MAINNET_KEYS
+    ? process.env.MAINNET_KEYS.split(",")
     : [];
-// prettier-ignore
-const ETHEREUM_TESTNET_KEYS: string[] = process.env.ETHEREUM_TESTNET_KEYS ?
-    process.env.ETHEREUM_TESTNET_KEYS.split(",") : [];
-// See `config.networks`.
-
-const CUSTOM_CHAIN_ID = 0;
-const CUSTOM_HTTP_HEADERS = { tokenID: process.env.CUSTOM_HTTP_HEADERS_TOKEN_ID || "" };
-
 /*
  * The solc compiler optimizer configuration. (The optimizer is disabled by default).
  *
@@ -71,20 +62,19 @@ const ENABLED_OPTIMIZER: boolean = !!process.env.ENABLED_OPTIMIZER || !!process.
 // `+` to convert to number.
 const OPTIMIZER_RUNS: number = process.env.OPTIMIZER_RUNS ? +process.env.OPTIMIZER_RUNS : 200;
 
-// const FORK_NETWORK = process.env.FORK_NETWORK || "ethereum";
-const FORK_NETWORK = process.env.npm_config_fork_network || "ethereum";
+const FORK_NETWORK = process.env.npm_config_fork_network || process.env.npm_config_args_network || "ethereum";
 
 // Object with FORKING URL for each network
-const FORKING_URLS: { [key: string]: string } = {
-    ethereum: process.env.FORKING_ETHEREUM_URL || "",
-    polygon: process.env.FORKING_POLYGON_URL || "",
-    arbitrum: process.env.FORKING_ARBITRUM_URL || "",
-    base: process.env.FORKING_BASE_URL || "",
-    optimism: process.env.FORKING_OPTIMISM_URL || ""
+const MAINNET_URLS: { [key: string]: string } = {
+    ethereum: process.env.MAINNET_ETHEREUM_URL || "",
+    polygon: process.env.MAINNET_POLYGON_URL || "",
+    arbitrum: process.env.MAINNET_ARBITRUM_URL || "",
+    base: process.env.MAINNET_BASE_URL || "",
+    optimism: process.env.MAINNET_OPTIMISM_URL || ""
 };
 
 // Determining the URL for forking depending on the network
-const FORKING_URL = FORKING_URLS[FORK_NETWORK] || "";
+const MAINNET_URL = MAINNET_URLS[FORK_NETWORK] || "";
 
 // Object with FORKING Block Numbers for each network
 const FORKING_BLOCK_NUMBERS: { [key: string]: string | undefined } = {
@@ -128,13 +118,11 @@ const config: HardhatUserConfig = {
             chains: {
                 137: {
                     hardforkHistory: {
-                        // berlin: 10000000,
                         london: 20000000
                     }
                 },
                 8453: {
                     hardforkHistory: {
-                        // berlin: 10000000,
                         london: 20000000
                     }
                 }
@@ -147,7 +135,7 @@ const config: HardhatUserConfig = {
                 count: process.env.NUMBER_OF_ACCOUNTS ? +process.env.NUMBER_OF_ACCOUNTS : 20
             },
             forking: {
-                url: FORKING_URL,
+                url: MAINNET_URL,
                 enabled: !!process.env.FORKING || false, // `!!` to convert to boolean.
                 ...(FORKING_BLOCK_NUMBER ? { blockNumber: FORKING_BLOCK_NUMBER } : {})
             }
@@ -158,31 +146,31 @@ const config: HardhatUserConfig = {
             // gas: 30000000,
             // gasPrice: 8000000000
         },
-        // The CUSTOM blockchain:
-        // Rest parameter (...) to treat it as a single array (added in ES6).
-        custom: {
-            url: process.env.CUSTOM_URL || "",
-            httpHeaders: { "Token-id": CUSTOM_HTTP_HEADERS.tokenID },
-            chainId: CUSTOM_CHAIN_ID,
-            accounts: [...CUSTOM_KEYS],
-            timeout: 300000,
-            gas: 30000000
-            // gasPrice: 8000000000
-        },
         // Ethereum:
         mainnet: {
-            url: FORKING_URL,
-            accounts: [...ETHEREUM_MAINNET_KEYS]
+            chainId: 1,
+            url: MAINNET_URL,
+            accounts: [...MAINNET_KEYS]
+        },
+        polygon: {
+            chainId: 137,
+            url: MAINNET_URL,
+            accounts: [...MAINNET_KEYS]
         },
         arbitrumOne: {
             chainId: 42161,
-            url: FORKING_URL,
-            accounts: [process.env.ARBITRUM_KEYS || ""]
+            url: MAINNET_URL,
+            accounts: [...MAINNET_KEYS]
         },
-        polygon: {
-            chainId: 80002,
-            url: FORKING_URL,
-            accounts: [process.env.POLYGON_KEYS || ""]
+        base: {
+            chainId: 8453,
+            url: MAINNET_URL,
+            accounts: [...MAINNET_KEYS]
+        },
+        optimisticEthereum: {
+            chainId: 10,
+            url: MAINNET_URL,
+            accounts: [...MAINNET_KEYS]
         },
         localhost: {
             chainId: 1,
@@ -224,39 +212,35 @@ const config: HardhatUserConfig = {
          * https://hardhat.org/hardhat-runner/plugins/nomiclabs-hardhat-etherscan#multiple-api-keys-and-alternative-block-explorers.
          */
         apiKey: {
-            custom: process.env.CUSTOM_BLOCKSCOUT_API_KEY || "",
-            // Ethereum:
             mainnet: process.env.ETHERSCAN_API_KEY || "",
-            goerli: process.env.ETHERSCAN_API_KEY || "",
-            sepolia: process.env.ETHERSCAN_API_KEY || "",
-            bscTestnet: process.env.BSCSCAN_API_KEY || "",
-            avalancheFujiTestnet: "avalancheFujiTestnet", // apiKey is not required, just set a placeholder
-            arbitrumOne: process.env.ARBITRUM_TESTNET_API_KEY || "",
-            polygon: process.env.POLYGON_TESTNET_API_KEY || ""
+            polygon: process.env.POLYGON_API_KEY || "",
+            arbitrumOne: process.env.ARBITRUM_API_KEY || "",
+            base: process.env.BASE_API_KEY || "",
+            optimisticEthereum: process.env.OPTIMISM_API_KEY || ""
         },
         customChains: [
             {
-                network: "custom",
-                chainId: CUSTOM_CHAIN_ID,
+                network: "base",
+                chainId: 8453,
                 urls: {
-                    apiURL: process.env.CUSTOM_BLOCKSCOUT_API_URL || "",
-                    browserURL: process.env.CUSTOM_BLOCKSCOUT_URL || ""
-                }
-            },
-            {
-                network: "arbitrum",
-                chainId: 421614,
-                urls: {
-                    apiURL: "https://api-sepolia.arbiscan.io/api",
-                    browserURL: "https://sepolia.arbiscan.io"
+                    apiURL: "https://api.basescan.org/api",
+                    browserURL: "https://basescan.org/"
                 }
             },
             {
                 network: "polygon",
-                chainId: 80002,
+                chainId: 137,
                 urls: {
-                    apiURL: "https://api-amoy.polygonscan.com/api",
-                    browserURL: "https://amoy.polygonscan.com"
+                    apiURL: "https://api.polygonscan.com/api",
+                    browserURL: "https://polygonscan.com/"
+                }
+            },
+            {
+                network: "optimisticEthereum",
+                chainId: 10,
+                urls: {
+                    apiURL: "https://api-optimistic.etherscan.io/api",
+                    browserURL: "https://optimistic.etherscan.io"
                 }
             }
         ]

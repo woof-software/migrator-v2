@@ -156,9 +156,6 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
 
         // If a swap is required to obtain the repayment tokens
         if (borrow.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
-            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
-
             // Perform a swap to obtain the borrow token using the provided swap parameters
             _swapFlashloanToBorrowToken(
                 ISwapRouter.ExactOutputParams({

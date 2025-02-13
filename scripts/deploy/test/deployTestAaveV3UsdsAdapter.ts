@@ -7,7 +7,7 @@ import path from "path";
 import { getAddressSaver, verify } from "../utils/helpers";
 const { ethers, network } = hre;
 
-const CONTRACT_NAME = "TestAaveV3Adapter";
+const CONTRACT_NAME = "TestAaveV3UsdsAdapter";
 const FILE_NAME = "deploymentAddresses";
 const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 
@@ -23,9 +23,10 @@ const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 async function deploy() {
     const [deployer] = await ethers.getSigners();
 
-    const config = process.env.npm_config_args_network;
-    const args = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[config || "hardhat"].AaveV3Adapter;
-    console.log("args", args);
+    const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
+        process.env.npm_config_args_network || "hardhat"
+    ];
+    const args = config.TestAaveV3UsdsAdapter;
 
     console.log("\n --- Deployed data --- \n");
     console.log("* ", deployer.address, "- Deployer address");
@@ -51,7 +52,6 @@ async function deploy() {
 
     console.log("\nDeployment is completed.");
     await verify(contract.address, [args]);
-    // await verify("0xF0D52Fbab6BD64fe7b7fFF6578f3295F236066Ef", [args]);
     console.log("\nDone.");
 }
 

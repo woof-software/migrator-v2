@@ -38,9 +38,19 @@
                 "chainId": 42161
             },
             "TestAaveV3Adapter": {
-                "address": "0xdb83bc921d49Bf73326D7BBA36a8CF8211d62534",
-                "deployedBlock": 304614911,
+                "address": "0x5f73BDCf848D7d73750DF1643E0104ce184AC142",
+                "deployedBlock": 305542823,
                 "chainId": 42161
+            }
+        }
+    },
+    "base": {
+        "old": {},
+        "new": {
+            "TestAaveV3Adapter": {
+                "address": "0xF0D52Fbab6BD64fe7b7fFF6578f3295F236066Ef",
+                "deployedBlock": 26319378,
+                "chainId": 8453
             }
         }
     }

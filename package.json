@@ -17,8 +17,7 @@
         "test-ft": "npx hardhat test --fulltrace",
         "test-f": "FORKING=true npx hardhat test test/fork/networks/$npm_config_fork_network/$npm_config_test_pattern",
         "test-f-aave": "npm run test-f --test-pattern=\"*AaveV3.test.ts\"",
-
-        "test-f-spark": "npm run test-f --fork-network=ethereum --test-pattern=\"*Spark.test.ts\"",
+        "test-f-spark": "npm run test-f --test-pattern=\"*Spark.test.ts\"",
         "test-f-t": "FORKING=true npx hardhat test test/fork/networks/ethereum/*AaveV3.test.ts --trace",
         "test-f-ft": "FORKING=true npx hardhat test test/fork/networks/ethereum/*AaveV3.test.ts --fulltrace",
         "test-4g": "NODE_OPTIONS=\"--max-old-space-size=4096\" npm test",
@@ -26,7 +25,9 @@
         "size-contracts": "npm run compile-all && npx hardhat size-contracts",
         "abi": "npx hardhat clear-abi && npx hardhat export-abi",
         "docs": "npx shx rm -rf docs && npx hardhat docgen",
-        "deploy:all": "ENABLED_OPTIMIZER=true npm run compile-all && node scripts/deployment/deploy.js",
+
+        "deploy": "ENABLED_OPTIMIZER=true && npx hardhat run scripts/deploy/test/deployTestAaveV3UsdsAdapter.ts --network $npm_config_network",
+
         "dev:slither": "npm run clean && slither .",
         "dev:lint": "npm run dev:prettier && npm run dev:solhint && npm run dev:eslint",
         "dev:lint-fix": "npm run dev:prettier-fix && npm run dev:solhint-fix && npm run dev:eslint-fix",

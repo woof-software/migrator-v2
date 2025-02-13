@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 // import "hardhat/console.sol";
 
 /**
@@ -13,6 +14,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  */
 contract MockSwapRouter is ISwapRouter {
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
     /**
      * @notice Executes a swap given an exact input (amountIn) to get as much output as possible.
      * @dev For simplicity, we assume a 1:1 rate: amountOut = params.amountIn.
@@ -85,7 +87,7 @@ contract MockSwapRouter is ISwapRouter {
      * @return amountIn The amount of input tokens spent.
      */
     function exactOutput(ExactOutputParams calldata params) external payable override returns (uint256 amountIn) {
-        (address tokenIn, address tokenOut) = _decodePath(params.path);
+        (, address tokenOut) = _decodePath(params.path);
 
         // amountIn = amountOut (1:1)
         amountIn = params.amountOut;
