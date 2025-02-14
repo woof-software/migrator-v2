@@ -32,6 +32,7 @@ async function deploy() {
     console.log("* ", deployer.address, "- Deployer address");
     console.log("* ", hre.network.name, "- Network name");
     console.log("* ", CONTRACT_NAME, "- Contract name");
+    console.log("* Arguments: ", args);
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);

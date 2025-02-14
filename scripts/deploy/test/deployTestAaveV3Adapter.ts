@@ -24,13 +24,13 @@ async function deploy() {
     const [deployer] = await ethers.getSigners();
 
     const config = process.env.npm_config_args_network;
-    const args = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[config || "hardhat"].AaveV3Adapter;
-    console.log("args", args);
+    const args = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[config || "hardhat"].TestAaveV3Adapter;
 
     console.log("\n --- Deployed data --- \n");
     console.log("* ", deployer.address, "- Deployer address");
     console.log("* ", hre.network.name, "- Network name");
     console.log("* ", CONTRACT_NAME, "- Contract name");
+    console.log("* Arguments: ", args);
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);

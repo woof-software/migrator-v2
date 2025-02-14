@@ -33,8 +33,8 @@
                 "chainId": 42161
             },
             "TestMigratorV2": {
-                "address": "0xab185b643FF5e46eF0699bdD0AbF33Bf2552B216",
-                "deployedBlock": 304615663,
+                "address": "0xb98462f09ADDd2946BE1138B4079D995bd229782",
+                "deployedBlock": 305961204,
                 "chainId": 42161
             },
             "TestAaveV3Adapter": {
@@ -51,6 +51,56 @@
                 "address": "0xF0D52Fbab6BD64fe7b7fFF6578f3295F236066Ef",
                 "deployedBlock": 26319378,
                 "chainId": 8453
+            },
+            "TestMigratorV2": {
+                "address": "0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a",
+                "deployedBlock": 26371867,
+                "chainId": 8453
+            }
+        }
+    },
+    "mainnet": {
+        "old": {},
+        "new": {
+            "TestAaveV3UsdsAdapter": {
+                "address": "0xbc0eF5E01bD68b239445cAD15A3Dd6824969138a",
+                "deployedBlock": 21843273,
+                "chainId": 1
+            },
+            "TestMigratorV2": {
+                "address": "0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e",
+                "deployedBlock": 21844460,
+                "chainId": 1
+            }
+        }
+    },
+    "polygon": {
+        "old": {},
+        "new": {
+            "TestAaveV3Adapter": {
+                "address": "0x79a9e3d05949eb9cad26046ebF856CbC3514EEfF",
+                "deployedBlock": 67905104,
+                "chainId": 137
+            },
+            "TestMigratorV2": {
+                "address": "0x61b065bC5b0dbaBff10e7Aa7ae820E0d6c54e54c",
+                "deployedBlock": 67911306,
+                "chainId": 137
+            }
+        }
+    },
+    "optimisticEthereum": {
+        "old": {},
+        "new": {
+            "TestAaveV3Adapter": {
+                "address": "0x79a9e3d05949eb9cad26046ebF856CbC3514EEfF",
+                "deployedBlock": 131960544,
+                "chainId": 10
+            },
+            "TestMigratorV2": {
+                "address": "0x61b065bC5b0dbaBff10e7Aa7ae820E0d6c54e54c",
+                "deployedBlock": 131966886,
+                "chainId": 10
             }
         }
     }
