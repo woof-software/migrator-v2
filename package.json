@@ -15,9 +15,13 @@
         "test": "npx hardhat test test/unit/*test.ts",
         "test-t": "npx hardhat test --trace",
         "test-ft": "npx hardhat test --fulltrace",
+
         "test-f": "FORKING=true npx hardhat test test/fork/networks/$npm_config_fork_network/$npm_config_test_pattern",
+
         "test-f-aave": "npm run test-f --test-pattern=\"*AaveV3.test.ts\"",
         "test-f-spark": "npm run test-f --test-pattern=\"*Spark.test.ts\"",
+        "test-f-morpho": "npm run test-f --test-pattern=\"*Morpho.test.ts\"",
+
         "test-f-t": "FORKING=true npx hardhat test test/fork/networks/ethereum/*AaveV3.test.ts --trace",
         "test-f-ft": "FORKING=true npx hardhat test test/fork/networks/ethereum/*AaveV3.test.ts --fulltrace",
         "test-4g": "NODE_OPTIONS=\"--max-old-space-size=4096\" npm test",
@@ -26,7 +30,7 @@
         "abi": "npx hardhat clear-abi && npx hardhat export-abi",
         "docs": "npx shx rm -rf docs && npx hardhat docgen",
 
-        "deploy": "ENABLED_OPTIMIZER=true && npx hardhat run scripts/deploy/test/deployTestMigratorV2.ts --network $npm_config_network",
+        "deploy": "ENABLED_OPTIMIZER=true && npx hardhat run scripts/deploy/test/deployTestMorphoUsdsAdapter.ts",
 
         "dev:slither": "npm run clean && slither .",
         "dev:lint": "npm run dev:prettier && npm run dev:solhint && npm run dev:eslint",
@@ -53,6 +57,7 @@
         "@nomicfoundation/hardhat-toolbox": "^2.0.0",
         "@nomiclabs/hardhat-solhint": "^2.0.1",
         "@openzeppelin/hardhat-upgrades": "^1.21.0",
+        "@tenderly/hardhat-tenderly": "^2.5.2",
         "@types/config": "^3.3.5",
         "@typescript-eslint/eslint-plugin": "^5.41.0",
         "@typescript-eslint/parser": "^5.41.0",

@@ -7,7 +7,9 @@ import path from "path";
 import { getAddressSaver, verify } from "../utils/helpers";
 const { ethers, network } = hre;
 
-const CONTRACT_NAME = "TestAaveV3UsdsAdapter";
+import { MigratorV2__factory } from "../../../typechain-types";
+
+const CONTRACT_NAME: string = "TestMorphoAdapter";
 const FILE_NAME = "deploymentAddresses";
 const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 
@@ -26,7 +28,7 @@ async function deploy() {
     const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
         process.env.npm_config_args_network || "hardhat"
     ];
-    const args = config.TestAaveV3UsdsAdapter;
+    const args = config[CONTRACT_NAME];
 
     console.log("\n --- Deployed data --- \n");
     console.log("* ", deployer.address, "- Deployer address");
@@ -54,6 +56,13 @@ async function deploy() {
     console.log("\nDeployment is completed.");
     await verify(contract.address, [args]);
     console.log("\nDone.");
+
+    // For Base mainnet, the address is "0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a".
+    // Add the address to the Migration contract.
+    console.log("Adding the adapter to the Migration contract...");
+    const migration = MigratorV2__factory.connect("0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a", deployer);
+    await migration.setAdapter(contract.address);
+    console.log("Adapter is added to the Migration contract.");
 }
 
 deploy().catch((error) => {

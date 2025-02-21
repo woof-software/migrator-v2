@@ -7,15 +7,16 @@ import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
+import {ConvertModule} from "../modules/ConvertModule.sol";
 import {IMorpho, MarketParams, Id, Market, Position} from "../interfaces/morpho/IMorpho.sol";
 import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
 import {IWETH9} from "../interfaces/IWETH9.sol";
 
-/// @title MorphoAdapter
+/// @title MorphoUsdsAdapter
 /// @notice Adapter contract to migrate positions from Morpho to Compound III (Comet)
 import "hardhat/console.sol";
 
-contract MorphoAdapter is IProtocolAdapter, SwapModule {
+contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     using SharesMathLib for uint256;
     using SafeERC20 for IERC20;
 
@@ -23,6 +24,9 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
 
     struct DeploymentParams {
         address uniswapRouter;
+        address daiUsdsConverter;
+        address dai;
+        address usds;
         address wrappedNativeToken;
         address morphoLendingPool;
         bool isFullMigration;
@@ -89,8 +93,8 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
     /// --------Constructor-------- ///
 
     /**
-     * @notice Initializes the MorphoAdapter contract
-     * @param deploymentParams Deployment parameters for the MorphoAdapter contract:
+     * @notice Initializes the MorphoUsdsAdapter contract
+     * @param deploymentParams Deployment parameters for the MorphoUsdsAdapter contract:
      * - uniswapRouter Address of the Uniswap V3 SwapRouter contract
      * - daiUsdsConverter Address of the DAI to USDS converter contract
      * - dai Address of the DAI token
@@ -101,7 +105,12 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * - isFullMigration Boolean indicating whether the migration is full or partial
      * @dev Reverts if any of the provided addresses are zero
      */
-    constructor(DeploymentParams memory deploymentParams) SwapModule(deploymentParams.uniswapRouter) {
+    constructor(
+        DeploymentParams memory deploymentParams
+    )
+        SwapModule(deploymentParams.uniswapRouter)
+        ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
+    {
         if (deploymentParams.morphoLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
             revert InvalidZeroAddress();
 
@@ -162,16 +171,22 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
         if (borrow.swapParams.path.length > 0) {
             address tokenIn = _decodeTokenIn(borrow.swapParams.path);
             address tokenOut = _decodeTokenOut(borrow.swapParams.path);
-            // Perform a swap to obtain the borrow token using the provided swap parameters
-            _swapFlashloanToBorrowToken(
-                ISwapRouter.ExactOutputParams({
-                    path: borrow.swapParams.path,
-                    recipient: address(this),
-                    amountOut: borrow.assetsAmount,
-                    amountInMaximum: borrow.swapParams.amountInMaximum,
-                    deadline: block.timestamp
-                })
-            );
+            // If the swap is from USDS to DAI, convert USDS to DAI
+            if (tokenIn == ConvertModule.USDS && tokenOut == ConvertModule.DAI) {
+                // Convert USDS to DAI for repayment
+                _convertUsdsToDai(borrow.assetsAmount);
+            } else {
+                // Perform a swap to obtain the borrow token using the provided swap parameters
+                _swapFlashloanToBorrowToken(
+                    ISwapRouter.ExactOutputParams({
+                        path: borrow.swapParams.path,
+                        recipient: address(this),
+                        amountOut: borrow.assetsAmount,
+                        amountInMaximum: borrow.swapParams.amountInMaximum,
+                        deadline: block.timestamp
+                    })
+                );
+            }
         }
 
         // Get the underlying asset address of the debt token
@@ -218,19 +233,28 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
 
         // If a swap is required to obtain the migration tokens
         if (collateral.swapParams.path.length > 0) {
+            address tokenIn = _decodeTokenIn(collateral.swapParams.path);
             address tokenOut = _decodeTokenOut(collateral.swapParams.path);
-            uint256 amountOut = _swapCollateralToCompoundToken(
-                ISwapRouter.ExactInputParams({
-                    path: collateral.swapParams.path,
-                    recipient: address(this),
-                    amountIn: withdrawAmount,
-                    amountOutMinimum: collateral.swapParams.amountOutMinimum,
-                    deadline: block.timestamp
-                })
-            );
-            IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
-            IComet(comet).supplyTo(user, tokenOut, amountOut);
-            return;
+            // If the swap is from DAI to USDS, convert DAI to USDS
+            if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
+                _convertDaiToUsds(withdrawAmount);
+                IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, withdrawAmount);
+                IComet(comet).supplyTo(user, ConvertModule.USDS, withdrawAmount);
+                return;
+            } else {
+                uint256 amountOut = _swapCollateralToCompoundToken(
+                    ISwapRouter.ExactInputParams({
+                        path: collateral.swapParams.path,
+                        recipient: address(this),
+                        amountIn: withdrawAmount,
+                        amountOutMinimum: collateral.swapParams.amountOutMinimum,
+                        deadline: block.timestamp
+                    })
+                );
+                IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+                IComet(comet).supplyTo(user, tokenOut, amountOut);
+                return;
+            }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
         } else if (collateralAsset == NATIVE_TOKEN) {
             // Wrap the native token

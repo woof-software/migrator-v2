@@ -80,6 +80,12 @@
                 "aaveLendingPool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
                 "aaveDataProvider": "0xd82a47fdebB5bf5329b09441C3DaB4b5df2153Ad",
                 "isFullMigration": true
+            },
+            "TestMorphoAdapter": {
+                "uniswapRouter": "0x2626664c2603336E57B271c5C0b26F421741e481",
+                "wrappedNativeToken": "0x4200000000000000000000000000000000000006",
+                "morphoLendingPool": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+                "isFullMigration": true
             }
         },
         "ethereum": {
@@ -129,6 +135,25 @@
                 "wrappedNativeToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                 "aaveLendingPool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
                 "aaveDataProvider": "0x41393e5e337606dc3821075Af65AeE84D7688CBD",
+                "isFullMigration": true
+            },
+            "TestSparkUsdsAdapter": {
+                "uniswapRouter": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+                "daiUsdsConverter": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
+                "dai": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                "usds": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+                "wrappedNativeToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "sparkLendingPool": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
+                "sparkDataProvider": "0xFc21d6d146E6086B8359705C8b28512a983db0cb",
+                "isFullMigration": true
+            },
+            "TestMorphoUsdsAdapter": {
+                "uniswapRouter": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+                "daiUsdsConverter": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
+                "dai": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                "usds": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+                "wrappedNativeToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "morphoLendingPool": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
                 "isFullMigration": true
             }
         },

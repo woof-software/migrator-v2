@@ -56,6 +56,11 @@
                 "address": "0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a",
                 "deployedBlock": 26371867,
                 "chainId": 8453
+            },
+            "TestMorphoAdapter": {
+                "address": "0x3a747C447305556E1c9f52d4a87524a697ddb4bb",
+                "deployedBlock": 26676490,
+                "chainId": 8453
             }
         }
     },
@@ -70,6 +75,16 @@
             "TestMigratorV2": {
                 "address": "0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e",
                 "deployedBlock": 21844460,
+                "chainId": 1
+            },
+            "TestSparkUsdsAdapter": {
+                "address": "0xC90BE534054fA3b2420645ffEb05705dDe0cd530",
+                "deployedBlock": 21886692,
+                "chainId": 1
+            },
+            "TestMorphoUsdsAdapter": {
+                "address": "0xC403f466a5e8A068fD51352DcCca311809F5Af68",
+                "deployedBlock": 21894857,
                 "chainId": 1
             }
         }

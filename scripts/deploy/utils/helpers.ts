@@ -37,7 +37,8 @@ async function verify(address: string, args: any) {
             .run("verify:verify", {
                 address,
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                constructorArguments: args
+                constructorArguments: args,
+                force: true,
             })
             .catch((e) => console.log("Verification failed: %o", e));
     }

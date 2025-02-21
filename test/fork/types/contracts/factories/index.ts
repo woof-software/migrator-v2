@@ -2,6 +2,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export { AavePool__factory } from "./AavePool__factory";
+export { MorphoPool__factory } from "./MorphoPool__factory";
 export { SparkPool__factory } from "./SparkPool__factory";
 export { WETHGateway__factory } from "./WETHGateway__factory";
 export { WrappedTokenGatewayV3__factory } from "./WrappedTokenGatewayV3__factory";
