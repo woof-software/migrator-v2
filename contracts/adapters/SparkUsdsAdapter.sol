@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {ISparkPool} from "../interfaces/spark/ISparkPool.sol";
 import {ISparkPoolDataProvider} from "../interfaces/spark/ISparkPoolDataProvider.sol";
@@ -12,10 +12,15 @@ import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
 import {IWETH9} from "../interfaces/IWETH9.sol";
+import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /// @title SparkUsdsAdapter
 /// @notice Adapter contract to migrate positions from Spark to Compound III (Comet)
-contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
+contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, DelegateReentrancyGuard {
+    /// -------- Libraries -------- ///
+
+    using SafeERC20 for IERC20;
+
     /// --------Custom Types-------- ///
 
     /**
@@ -143,18 +148,18 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param migrationData Encoded data containing the user's Spark position details
      */
-    function executeMigration(address user, address comet, bytes calldata migrationData) external override {
+    function executeMigration(address user, address comet, bytes calldata migrationData) external nonReentrant {
         // Decode the migration data into an SparkPosition struct
         SparkPosition memory position = abi.decode(migrationData, (SparkPosition));
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
-            repayBorrow(user, position.borrows[i]);
+            _repayBorrow(user, position.borrows[i]);
         }
 
         // Migrate each collateral position
         for (uint256 i = 0; i < position.collateral.length; i++) {
-            migrateCollateral(user, comet, position.collateral[i]);
+            _migrateCollateral(user, comet, position.collateral[i]);
         }
     }
 
@@ -164,7 +169,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @param user Address of the user whose borrow is being repaid
      * @param borrow The borrow position details
      */
-    function repayBorrow(address user, SparkBorrow memory borrow) internal {
+    function _repayBorrow(address user, SparkBorrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
             ? IERC20(borrow.debtToken).balanceOf(user)
@@ -196,7 +201,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Spark Lending Pool to spend the repayment amount
-        IDebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
+        IERC20(underlyingAsset).safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
@@ -212,7 +217,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param collateral The collateral position details
      */
-    function migrateCollateral(address user, address comet, SparkCollateral memory collateral) internal {
+    function _migrateCollateral(address user, address comet, SparkCollateral memory collateral) internal {
         // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
         uint256 spTokenAmount = collateral.amount == type(uint256).max
             ? ISpToken(collateral.spToken).balanceOf(user)
@@ -231,9 +236,8 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
             // If the swap is from DAI to USDS, convert DAI to USDS
             if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
                 _convertDaiToUsds(spTokenAmount);
-                IERC20(ConvertModule.USDS).approve(comet, spTokenAmount);
+                IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, spTokenAmount);
                 IComet(comet).supplyTo(user, ConvertModule.USDS, spTokenAmount);
-                return;
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
                     ISwapRouter.ExactInputParams({
@@ -244,9 +248,15 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         deadline: block.timestamp
                     })
                 );
-                IERC20(tokenOut).approve(comet, amountOut);
-                IComet(comet).supplyTo(user, tokenOut, amountOut);
-                return;
+
+                if (tokenOut == ConvertModule.DAI && IComet(comet).baseToken() == ConvertModule.USDS) {
+                    _convertDaiToUsds(amountOut);
+                    IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, amountOut);
+                    IComet(comet).supplyTo(user, ConvertModule.USDS, amountOut);
+                } else {
+                    IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+                    IComet(comet).supplyTo(user, tokenOut, amountOut);
+                }
             }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
         } else if (underlyingAsset == NATIVE_TOKEN) {
@@ -255,10 +265,9 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
             // Approve the wrapped native token to be spent by Comet
             WRAPPED_NATIVE_TOKEN.approve(comet, spTokenAmount);
             IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), spTokenAmount);
-            return;
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(underlyingAsset).approve(comet, spTokenAmount);
+            IERC20(underlyingAsset).safeIncreaseAllowance(comet, spTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, spTokenAmount);
         }
     }

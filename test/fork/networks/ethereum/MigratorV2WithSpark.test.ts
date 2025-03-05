@@ -39,7 +39,7 @@ import { SparkPool__factory, WETHGateway__factory } from "../../types/contracts"
  *      ```
  *
  *  **Enabling Debug Logs**
- *    - To display additional debug logs (collateral balances and borrow positions before and after migration),  
+ *    - To display additional debug logs (collateral balances and borrow positions before and after migration),
  *      add the `--debug-log=true` flag:
  *      ```sh
  *      npm run test-f-spark --debug-log=true --fork-network=ethereum
@@ -173,7 +173,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             ])
         );
 
-        const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", owner);
+        const SparkAdapterFactory = await ethers.getContractFactory("SparkUsdsAdapter", owner);
         const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy({
             uniswapRouter: uniswapContractAddresses.router,
             daiUsdsConverter: daiUsdsAddress,

@@ -3,7 +3,7 @@
         "arbitrum": {
             "TestMigratorV2": {
                 "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
-                "adapters": ["0x5f73BDCf848D7d73750DF1643E0104ce184AC142"],
+                "adapters": ["0xf0E4D3A96ebe87aE39560d2B19e53dCC00aB5d28"],
                 "comets": [
                     "0xA5EDBDD9646f8dFF606d7448e414884C7d905dCA",
                     "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
@@ -39,12 +39,19 @@
                 "aaveLendingPool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
                 "aaveDataProvider": "0x7F23D86Ee20D869112572136221e173428DD740B",
                 "isFullMigration": true
+            },
+            "TestUniswapV3PathFinder": {
+                "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
             }
         },
         "base": {
             "TestMigratorV2": {
                 "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
-                "adapters": ["0xF0D52Fbab6BD64fe7b7fFF6578f3295F236066Ef"],
+                "adapters": [
+                    "0xD655Fb965aC05552e83A4c73A1F832024DC5F515",
+                    "0x037642eA98cCaed61Ba2eEC17cc799FE6691d39E"
+                ],
                 "comets": [
                     "0xb125E6687d4313864e53df431d5425969c15Eb2F",
                     "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
@@ -86,12 +93,20 @@
                 "wrappedNativeToken": "0x4200000000000000000000000000000000000006",
                 "morphoLendingPool": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
                 "isFullMigration": true
+            },
+            "TestUniswapV3PathFinder": {
+                "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+                "quoterV2": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"
             }
         },
         "ethereum": {
             "TestMigratorV2": {
                 "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
-                "adapters": ["0xbc0eF5E01bD68b239445cAD15A3Dd6824969138a"],
+                "adapters": [
+                    "0x2b36a96c9E7177A4536C1cB9A50Fbc9f8D9A77E2",
+                    "0x30e7d25774507630733d1E277E7B664b1Dee757e",
+                    "0xD655Fb965aC05552e83A4c73A1F832024DC5F515"
+                ],
                 "comets": [
                     "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
                     "0xA17581A9E3356d9A858b789D68B4d866e593aE94",
@@ -155,12 +170,46 @@
                 "wrappedNativeToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                 "morphoLendingPool": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
                 "isFullMigration": true
+            },
+            "TestUniswapV3PathFinder": {
+                "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+            }
+        },
+        "polygon": {
+            "TestMigratorV2": {
+                "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
+                "adapters": ["0x0F4ee1b1B6451b7cE2b49378094695d3d6dE2e1d"],
+                "comets": ["0xF25212E676D1F7F89Cd72fFEe66158f541246445", "0xaeB318360f27748Acb200CE616E389A6C9409a07"],
+                "flashData": [
+                    {
+                        "liquidityPool": "0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D",
+                        "baseToken": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+                        "isToken0": true
+                    },
+                    {
+                        "liquidityPool": "0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D",
+                        "baseToken": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+                        "isToken0": false
+                    }
+                ]
+            },
+            "TestAaveV3Adapter": {
+                "uniswapRouter": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+                "wrappedNativeToken": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+                "aaveLendingPool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+                "aaveDataProvider": "0x7F23D86Ee20D869112572136221e173428DD740B",
+                "isFullMigration": true
+            },
+            "TestUniswapV3PathFinder": {
+                "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
             }
         },
         "optimism": {
             "TestMigratorV2": {
                 "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
-                "adapters": ["0x79a9e3d05949eb9cad26046ebF856CbC3514EEfF"],
+                "adapters": ["0x74c15Aa6f11029e900493e53898dD558aF4B842f"],
                 "comets": [
                     "0x2e44e174f7D53F0212823acC11C01A11d58c5bCB",
                     "0x995E394b8B2437aC8Ce61Ee0bC610D617962B214",
@@ -190,32 +239,10 @@
                 "aaveLendingPool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
                 "aaveDataProvider": "0x7F23D86Ee20D869112572136221e173428DD740B",
                 "isFullMigration": true
-            }
-        },
-        "polygon": {
-            "TestMigratorV2": {
-                "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
-                "adapters": ["0x79a9e3d05949eb9cad26046ebF856CbC3514EEfF"],
-                "comets": ["0xF25212E676D1F7F89Cd72fFEe66158f541246445", "0xaeB318360f27748Acb200CE616E389A6C9409a07"],
-                "flashData": [
-                    {
-                        "liquidityPool": "0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D",
-                        "baseToken": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
-                        "isToken0": true
-                    },
-                    {
-                        "liquidityPool": "0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D",
-                        "baseToken": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
-                        "isToken0": false
-                    }
-                ]
             },
-            "TestAaveV3Adapter": {
-                "uniswapRouter": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
-                "wrappedNativeToken": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
-                "aaveLendingPool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
-                "aaveDataProvider": "0x7F23D86Ee20D869112572136221e173428DD740B",
-                "isFullMigration": true
+            "TestUniswapV3PathFinder": {
+                "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
             }
         }
     }

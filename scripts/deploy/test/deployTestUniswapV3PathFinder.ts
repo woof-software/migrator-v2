@@ -7,9 +7,7 @@ import path from "path";
 import { getAddressSaver, verify } from "../utils/helpers";
 const { ethers, network } = hre;
 
-import { MigratorV2__factory } from "../../../typechain-types";
-
-const CONTRACT_NAME: string = "TestMorphoUsdsAdapter";
+const CONTRACT_NAME = "TestUniswapV3PathFinder";
 const FILE_NAME = "deploymentAddresses";
 const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 
@@ -25,11 +23,8 @@ const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 async function deploy() {
     const [deployer] = await ethers.getSigners();
 
-    const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
-        process.env.npm_config_args_network || "hardhat"
-    ];
-    const args = config[CONTRACT_NAME];
-    console.log("Block number:", await ethers.provider.getBlockNumber());
+    const config = process.env.npm_config_args_network;
+    const args = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[config || "hardhat"][CONTRACT_NAME];
 
     console.log("\n --- Deployed data --- \n");
     console.log("* ", deployer.address, "- Deployer address");
@@ -39,7 +34,7 @@ async function deploy() {
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    const contract = await Contract.connect(deployer).deploy(args);
+    const contract = await Contract.connect(deployer).deploy(args.factory, args.quoterV2);
     const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
     console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
@@ -55,17 +50,9 @@ async function deploy() {
     );
 
     console.log("\nDeployment is completed.");
-    await verify(contract.address, [args]);
+    await verify(contract.address, [args.factory, args.quoterV2]);
+    // await verify("0xF0D52Fbab6BD64fe7b7fFF6578f3295F236066Ef", [args]);
     console.log("\nDone.");
-
-    // // For Ethereum mainnet, the address is "0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e".
-    // // Add the address to the Migration contract.
-    // console.log("Adding the adapter to the Migration contract...");
-    // const migration = MigratorV2__factory.connect("0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e", deployer);
-    // // await migration.setAdapter(contract.address);
-    // // await migration.setAdapter("0xC403f466a5e8A068fD51352DcCca311809F5Af68");
-    // console.log("owner: ", await migration.owner());
-    // console.log("Adapter is added to the Migration contract.");
 }
 
 deploy().catch((error) => {

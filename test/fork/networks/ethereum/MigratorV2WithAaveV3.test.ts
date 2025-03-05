@@ -10,7 +10,10 @@ import {
     setBalance,
     parseUnits,
     loadFixture,
-    log
+    log,
+    formatUnits,
+    AddressZero,
+    BigNumber
 } from "../../../helpers"; // Adjust the path as needed
 
 import {
@@ -22,10 +25,18 @@ import {
     IAToken__factory,
     IAToken,
     IDebtToken__factory,
-    IDebtToken
+    IDebtToken,
+    UniswapV3PathFinder,
+    UniswapV3PathFinderStage
 } from "../../../../typechain-types";
 
-import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/contracts";
+import {
+    AavePool__factory,
+    WrappedTokenGatewayV3__factory,
+    Quoter__factory,
+    QuoterV2__factory,
+    UniswapV3Factory__factory
+} from "../../types/contracts";
 
 /**
  *  **Fork Tests: How to Run**
@@ -55,7 +66,9 @@ import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/c
  */
 
 // Convert fee to 3-byte hex
+const FEE_10000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(10000), 3); // 1%
 const FEE_3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(3000), 3); // 0.3%
+const FEE_500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(500), 3); // 0.05%
 const FEE_100 = ethers.utils.hexZeroPad(ethers.utils.hexlify(100), 3); // 0.01%
 
 const POSITION_ABI = [
@@ -78,7 +91,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             USDT: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             USDS: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
             WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+            LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+            wstETH: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
+            cbBTC: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
         };
 
         const treasuryAddresses: Record<string, string> = {
@@ -88,7 +103,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             USDT: "0xF977814e90dA44bFA03b6295A0616a897441aceC",
             USDS: "0x1AB4973a48dc892Cd9971ECE8e01DcC7688f8F23",
             WETH: "0x8EB8a3b98659Cce290402893d0123abb75E3ab28",
-            LINK: "0xF977814e90dA44bFA03b6295A0616a897441aceC"
+            LINK: "0xF977814e90dA44bFA03b6295A0616a897441aceC",
+            wstETH: "0xC329400492c6ff2438472D4651Ad17389fCb843a",
+            cbBTC: "0x698C1f4c8db11629fDC913F54A6dC44a9166F187"
         };
 
         const aaveContractAddresses = {
@@ -123,7 +140,10 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             pools: {
                 USDC_USDT: "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6",
                 DAI_USDS: "0xe9F1E2EF814f5686C30ce6fb7103d0F780836C67"
-            }
+            },
+            factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6",
+            quoterV2: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
         };
 
         const compoundContractAddresses = {
@@ -235,6 +255,220 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
     }
 
     context("Migrate positions from AaveV3 to Compound III", function () {
+        it.only(
+            "Scn.#01: uniswapV3PathFinder | get path for WBTC to LINK | connector: WETH, USDC, USDT",
+            async function () {
+                const { tokenAddresses, tokenDecimals, migratorV2, user, uniswapContractAddresses } = await loadFixture(
+                    setupEnv
+                );
+
+                const amountIn = parseUnits("0.15", tokenDecimals.WBTC); // 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
+                // const amountOut = parseUnits("2", tokenDecimals.WETH); // 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+                const amountOut = parseUnits("12548.45", tokenDecimals.USDT);
+
+                // const factory = UniswapV3Factory__factory.connect(uniswapContractAddresses.factory, user);
+
+                // const poolAddress = await factory.getPool(tokenAddresses.WETH, tokenAddresses.LINK, 100);
+
+                // const pathSingle = await pathFinder.callStatic.getBestSingleSwapPath(
+                //     tokenAddresses.WBTC,
+                //     tokenAddresses.WETH,
+                //     amountIn,
+                //     AddressZero,
+                //     { gasLimit: 30000000 }
+                // );
+
+                // 12494563993
+
+                // 12541236290
+
+                // 14953462
+
+                // 15674550
+
+                // console.log("pathSingle:", pathSingle);
+                // console.log("bestAmountOut:", formatUnits(pathSingle.amountOut, tokenDecimals.WETH));
+
+                const UniswapV3PathFinder_ = await ethers.getContractFactory("UniswapV3PathFinder");
+                const pathFinder_ = (await UniswapV3PathFinder_.connect(user).deploy(
+                    uniswapContractAddresses.factory,
+                    uniswapContractAddresses.quoterV2
+                )) as UniswapV3PathFinder;
+
+                const maxGasEstimate = BigNumber.from(500000);
+
+                const singlePathExpectIn = await pathFinder_.callStatic.getBestSingleSwapPath(
+                    {
+                        tokenIn: tokenAddresses.WBTC,
+                        tokenOut: tokenAddresses.USDT,
+                        amountIn: amountIn,
+                        amountOut: Zero,
+                        excludedPool: AddressZero,
+                        maxGasEstimate
+                    },
+                    { gasLimit: 30000000 }
+                );
+
+                console.log("^^singlePathExpectIn:", singlePathExpectIn);
+                console.log("^^bestAmountOut:", formatUnits(singlePathExpectIn.estimatedAmount, tokenDecimals.USDT)); // 0.15087684
+
+                const singlePathExpectOut = await pathFinder_.callStatic.getBestSingleSwapPath(
+                    {
+                        tokenIn: tokenAddresses.WBTC,
+                        tokenOut: tokenAddresses.USDT,
+                        amountIn: Zero,
+                        amountOut: amountOut,
+                        excludedPool: AddressZero,
+                        maxGasEstimate
+                    },
+                    { gasLimit: 30000000 }
+                );
+
+                console.log("^^singlePathExpectOut:", singlePathExpectOut);
+                console.log("^^bestAmountIn:", formatUnits(singlePathExpectOut.estimatedAmount, tokenDecimals.WBTC)); // 14287.941962
+
+                const multiPathExpectIn = await pathFinder_.callStatic.getBestMultiSwapPath(
+                    {
+                        tokenIn: tokenAddresses.WBTC,
+                        tokenOut: tokenAddresses.USDT,
+                        connectors: [tokenAddresses.WETH],
+                        amountIn: amountIn,
+                        amountOut: Zero,
+                        excludedPool: AddressZero,
+                        maxGasEstimate
+                    },
+                    { gasLimit: 30000000 }
+                );
+
+                console.log("**multiPathExpectIn:", multiPathExpectIn);
+                console.log("**bestAmountOut:", formatUnits(multiPathExpectIn.estimatedAmount, tokenDecimals.USDT)); // 14287.941962
+
+                const multiPathExpectOut = await pathFinder_.callStatic.getBestMultiSwapPath(
+                    {
+                        tokenIn: tokenAddresses.WBTC,
+                        // tokenOut: tokenAddresses.WETH,
+                        tokenOut: tokenAddresses.USDT,
+                        connectors: [tokenAddresses.WETH],
+                        amountIn: Zero,
+                        amountOut: amountOut,
+                        excludedPool: AddressZero,
+                        maxGasEstimate
+                    },
+                    { gasLimit: 30000000 }
+                );
+
+                console.log("^^multiPathExpectOut:", multiPathExpectOut);
+                console.log("^^bestAmountIn:", formatUnits(multiPathExpectOut.estimatedAmount, tokenDecimals.WBTC)); // 0.15087684
+
+                console.log("\n---------------------\n");
+
+                const quoterV2 = QuoterV2__factory.connect(uniswapContractAddresses.quoterV2, user);
+                const factory = UniswapV3Factory__factory.connect(uniswapContractAddresses.factory, user);
+
+                // console.log("Poll_1:", await factory.getPool(tokenAddresses.WETH, tokenAddresses.USDC, 3000));
+
+                const tokenIn = tokenAddresses.WBTC;
+                const tokenOut = tokenAddresses.USDT;
+
+                // const amountIn_ = parseUnits("0.5", tokenDecimals.WBTC);
+                // const amountOut_ = parseUnits("2", tokenDecimals.WETH);
+
+                console.log("Poll_2:", await factory.getPool(tokenIn, tokenOut, 500));
+
+                const pathIn = ethers.utils.concat([
+                    ethers.utils.hexZeroPad(tokenIn, 20),
+                    // FEE_500,
+                    // ethers.utils.hexZeroPad(tokenAddresses.USDT, 20),
+                    FEE_500,
+                    ethers.utils.hexZeroPad(tokenOut, 20)
+                ]);
+
+                const pathOut = ethers.utils.concat([
+                    ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                    FEE_500,
+                    ethers.utils.hexZeroPad(tokenOut, 20)
+                    // ethers.utils.hexZeroPad(tokenIn, 20)
+                ]);
+
+                // 0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8514910771af9ca656af840dff83e8264ecf986ca
+                // 0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4514910771af9ca656af840dff83e8264ecf986ca
+                // console.log("Path:", ethers.utils.hexlify(path));
+                // console.log("---Path:", path);
+
+                // const quote = await quoter.callStatic.quoteExactInput(path, amountIn); // ~ 955 USD
+                // const quoteV2 = await quoterV2.callStatic.quoteExactInput("0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8514910771af9ca656af840dff83e8264ecf986ca", amountIn); // ~ 955 USD
+
+                const quoteIn = await quoterV2.callStatic.quoteExactInput(pathIn, amountIn);
+                // // const quoteIn = await quoterV2.callStatic.quoteExactInput(
+                // //     "0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4dac17f958d2ee523a2206206994597c13d831ec7000064c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+                // //     amountIn
+                // // );
+                console.log("pathIn - ", ethers.utils.hexlify(pathIn));
+                console.log("quoteIn:amountIn - ", formatUnits(quoteIn.amountOut, tokenDecimals.USDT));
+
+                // const quoteOut = await quoterV2.callStatic.quoteExactOutput(pathOut, amountOut);
+                const quoteOut = await quoterV2.callStatic.quoteExactOutput(
+                    "0xdac17f958d2ee523a2206206994597c13d831ec7002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb82260fac5e5542a773aa44fbcfedf7c193bc2c599",
+                    amountOut
+                );
+                console.log("pathOut - ", ethers.utils.hexlify(pathOut));
+                console.log("QuoteOut:amountOut - ", formatUnits(quoteOut.amountIn, tokenDecimals.WBTC));
+            }
+        ).timeout(0);
+        // it.skip(
+        //     "Scn.#0: uniswapV3PathFinder | get path for WBTC to LINK | connector: WETH, USDC, USDT",
+        //     async function () {
+        //         const {
+        //             user,
+        //             treasuryAddresses,
+        //             tokenAddresses,
+        //             tokenContracts,
+        //             tokenDecimals,
+        //             aaveContractAddresses,
+        //             aTokenContracts,
+        //             debtTokenContracts,
+        //             uniswapContractAddresses,
+        //             aaveV3Adapter,
+        //             migratorV2,
+        //             aaveV3Pool,
+        //             wrappedTokenGateway, // 3652940205146178521, 52268054414917721654
+        //             cUSDCv3Contract,
+        //             pathFinder
+        //         } = await loadFixture(setupEnv);
+
+        //         // const testPath = ethers.utils.concat([
+        //         //     ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+        //         //     FEE_500,
+        //         //     ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+        //         //     FEE_100,
+        //         //     ethers.utils.hexZeroPad(tokenAddresses.LINK, 20)
+        //         // ]);
+
+        //         const amountIn = parseUnits("0.01", tokenDecimals.WBTC);
+        //         const maxGasEstimate = 208100000000000;
+
+        //         const path = await pathFinder.callStatic.getBestSwapPath(
+        //             // const path = await pathFinder.getBestSwapPath(
+        //             tokenAddresses.WBTC,
+        //             tokenAddresses.LINK,
+        //             [tokenAddresses.WETH],
+        //             // [tokenAddresses.WETH], // 52268054414917721654 // 3652940205146178521
+        //             amountIn,
+        //             // ["0x618004783d422DfB792D07D742549D5A24648dF2"], // Uniswap V3 pools: WBTC / LINK 0.3% fee
+        //             [
+        //                 "0x618004783d422dfb792d07d742549d5a24648df2"
+        //                 // "0xe6ff8b9a37b0fab776134636d9981aa778c4e718",
+        //                 // "0x4585fe77225b41b697c938b018e2ac67ac5a20c0",
+        //                 // "0xcbcdf9626bc03e24f779434178a73a0b4bad62ed",
+        //                 // "0x6ab3bba2f41e7eaa262fa5a1a9b3932fa161526f"
+        //             ], // Uniswap V3 pools: WBTC / LINK 0.3% fee
+        //             { gasLimit: 30000000 }
+        //         );
+
+        //         console.log("path:", path);
+        //     }
+        // ).timeout(0);
+
         it("Scn.#1: migration of all collaterals | three collateral (incl. Native Token) and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
             const {
                 user,
@@ -245,6 +479,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aaveContractAddresses,
                 aTokenContracts,
                 debtTokenContracts,
+                uniswapContractAddresses,
                 compoundContractAddresses,
                 aaveV3Adapter,
                 migratorV2,

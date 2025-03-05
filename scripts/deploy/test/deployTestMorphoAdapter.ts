@@ -57,12 +57,12 @@ async function deploy() {
     await verify(contract.address, [args]);
     console.log("\nDone.");
 
-    // For Base mainnet, the address is "0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a".
-    // Add the address to the Migration contract.
-    console.log("Adding the adapter to the Migration contract...");
-    const migration = MigratorV2__factory.connect("0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a", deployer);
-    await migration.setAdapter(contract.address);
-    console.log("Adapter is added to the Migration contract.");
+    // // For Base mainnet, the address is "0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a".
+    // // Add the address to the Migration contract.
+    // console.log("Adding the adapter to the Migration contract...");
+    // const migration = MigratorV2__factory.connect("0x06eA2DC3F7001d302A7007e1eB369E8D98EA281a", deployer);
+    // await migration.setAdapter(contract.address);
+    // console.log("Adapter is added to the Migration contract.");
 }
 
 deploy().catch((error) => {

@@ -16,8 +16,9 @@ import {IComet} from "./interfaces/IComet.sol";
  * @notice This contract facilitates migration of user positions between protocols using flash loans from Uniswap V3.
  * @dev The contract interacts with Uniswap V3 for flash loans and uses protocol adapters to execute migrations.
  */
-contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausable {
+contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownable {
     /// -------- Libraries -------- ///
+
     using SafeERC20 for IERC20;
 
     /// --------Types-------- ///
@@ -193,7 +194,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         address[] memory adapters,
         address[] memory comets,
         FlashData[] memory flashData
-    ) Ownable(multisig) ReentrancyGuard() Pausable() {
+    ) ReentrancyGuard() Pausable() Ownable(multisig) {
         // Ensure `comets` and `flashData` arrays have matching lengths
         if (comets.length != flashData.length) revert MismatchedArrayLengths();
 
@@ -232,7 +233,6 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         bytes calldata migrationData,
         uint256 flashAmount
     ) external validAdapter(adapter) validComet(comet) {
-        // if (flashAmount == 0) revert InvalidFlashAmount();
         if (migrationData.length == 0) revert InvalidMigrationData();
 
         address user = msg.sender;
@@ -268,15 +268,50 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
     }
 
     /**
-     * @notice Callback function triggered by Uniswap V3 after a flash loan is initiated.
+     * @notice Handles the logic executed during a Uniswap V3 flash loan callback.
      * @param fee0 Fee for borrowing token0 in the flash loan.
      * @param fee1 Fee for borrowing token1 in the flash loan.
-     * @param data Encoded data passed during the flash loan initiation, including migration details.
-     * @dev Validates the caller and decodes the callback data.
-     * @dev Invokes the adapter to execute the migration logic and ensures the flash loan is repaid.
+     * @param data Encoded data containing migration details, user information, and flash loan specifics.
+     * @dev Decodes the data passed in the flash loan, executes the migration using the protocol adapter,
+     * validates the repayment of the flash loan with fees, and emits the {AdapterExecuted} event.
+     * @dev Reverts with {SenderNotUniswapPool} if the caller is not the expected Uniswap V3 liquidity pool.
+     * @dev Reverts with {ERC20TransferFailure} if the token transfer to repay the flash loan fails.
      */
-    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external override {
-        _uniswapV3FlashCallback(fee0, fee1, data);
+    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external {
+        (address user, address adapter, address comet, bytes memory migrationData, uint256 flashAmount) = abi.decode(
+            data,
+            (address, address, address, bytes, uint256)
+        );
+
+        FlashData memory flashData = _flashData[comet];
+
+        if (msg.sender != flashData.liquidityPool) revert SenderNotUniswapPool(msg.sender);
+
+        uint256 flashAmountWithFee = flashAmount + (flashData.isToken0 ? fee0 : fee1);
+
+        (bool success, bytes memory result) = adapter.delegatecall(
+            abi.encodeWithSelector(IProtocolAdapter.executeMigration.selector, user, comet, migrationData)
+        );
+
+        if (!success) {
+            if (result.length > 0) {
+                assembly {
+                    revert(add(32, result), mload(result))
+                }
+            } else {
+                revert("Delegatecall failed");
+            }
+        }
+
+        uint256 balance = IERC20(flashData.baseToken).balanceOf(address(this));
+
+        if (balance < flashAmountWithFee) {
+            IComet(comet).withdrawFrom(user, address(this), address(flashData.baseToken), flashAmountWithFee - balance);
+        }
+
+        IERC20(flashData.baseToken).safeTransfer(flashData.liquidityPool, flashAmountWithFee);
+
+        emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
     }
 
     /// --------Owner Functions-------- ///
@@ -349,55 +384,11 @@ contract MigratorV2 is IUniswapV3FlashCallback, Ownable, ReentrancyGuard, Pausab
         return _adapters;
     }
 
-    /// --------Private Functions-------- ///
-
-    /**
-     * @notice Handles the logic executed during a Uniswap V3 flash loan callback.
-     * @param fee0 Fee for borrowing token0 in the flash loan.
-     * @param fee1 Fee for borrowing token1 in the flash loan.
-     * @param data Encoded data containing migration details, user information, and flash loan specifics.
-     * @dev Decodes the data passed in the flash loan, executes the migration using the protocol adapter,
-     * validates the repayment of the flash loan with fees, and emits the {AdapterExecuted} event.
-     * @dev Ensures reentrancy protection through the `nonReentrant` modifier.
-     * @dev Reverts with {SenderNotUniswapPool} if the caller is not the expected Uniswap V3 liquidity pool.
-     * @dev Reverts with {ERC20TransferFailure} if the token transfer to repay the flash loan fails.
-     */
-    function _uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) private nonReentrant {
-        (address user, address adapter, address comet, bytes memory migrationData, uint256 flashAmount) = abi.decode(
-            data,
-            (address, address, address, bytes, uint256)
-        );
-
-        FlashData memory flashData = _flashData[comet];
-
-        if (msg.sender != flashData.liquidityPool) revert SenderNotUniswapPool(msg.sender);
-
-        uint256 flashAmountWithFee = flashAmount + (flashData.isToken0 ? fee0 : fee1);
-
-        (bool success, bytes memory result) = adapter.delegatecall(
-            abi.encodeWithSelector(IProtocolAdapter.executeMigration.selector, user, comet, migrationData)
-        );
-
-        if (!success) {
-            if (result.length > 0) {
-                assembly {
-                    revert(add(32, result), mload(result))
-                }
-            } else {
-                revert("Delegatecall failed");
-            }
-        }
-
-        uint256 balance = IERC20(flashData.baseToken).balanceOf(address(this));
-
-        if (balance < flashAmountWithFee) {
-            IComet(comet).withdrawFrom(user, address(this), address(flashData.baseToken), flashAmountWithFee - balance);
-        }
-
-        IERC20(flashData.baseToken).safeTransfer(flashData.liquidityPool, flashAmountWithFee);
-
-        emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
+    function getFlashData(address comet) external view returns (FlashData memory) {
+        return _flashData[comet];
     }
+
+    /// --------Private Functions-------- ///
 
     /**
      * @notice Adds a new adapter to the list of allowed adapters.

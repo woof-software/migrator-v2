@@ -2,7 +2,9 @@
 pragma solidity 0.8.28;
 
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+// import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+// import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {ISwapRouter02} from "../interfaces/@uniswap/v3-periphery/ISwapRouter02.sol";
 import {CommonErrors} from "../errors/CommonErrors.sol";
@@ -12,7 +14,7 @@ import {CommonErrors} from "../errors/CommonErrors.sol";
  * @notice Provides advanced swap functionality using Uniswap V3, with slippage checking and error handling.
  * @dev Designed as an abstract contract for adapters to inherit.
  */
-abstract contract SwapModule is ReentrancyGuard, CommonErrors {
+abstract contract SwapModule is CommonErrors {
     /// -------- Libraries -------- ///
     using SafeERC20 for IERC20;
 
@@ -94,7 +96,7 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
      */
     function _swapFlashloanToBorrowToken(
         ISwapRouter.ExactOutputParams memory params
-    ) internal nonReentrant returns (uint256 amountIn) {
+    ) internal returns (uint256 amountIn) {
         if (params.amountOut == 0) revert ZeroAmountOut();
         if (params.path.length == 0) revert EmptySwapPath();
 
@@ -134,7 +136,7 @@ abstract contract SwapModule is ReentrancyGuard, CommonErrors {
      */
     function _swapCollateralToCompoundToken(
         ISwapRouter.ExactInputParams memory params
-    ) internal nonReentrant returns (uint256 amountOut) {
+    ) internal returns (uint256 amountOut) {
         if (params.amountIn == 0) revert ZeroAmountIn();
         if (params.path.length == 0) revert EmptySwapPath();
 

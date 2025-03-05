@@ -23,7 +23,7 @@ import {
     IAToken,
     IDebtToken__factory,
     IDebtToken
-} from "../../../../typechain-types";
+} from ".././../../../typechain-types";
 
 import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/contracts";
 

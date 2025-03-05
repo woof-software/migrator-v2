@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
@@ -10,12 +9,14 @@ import {SwapModule} from "../modules/SwapModule.sol";
 import {IMorpho, MarketParams, Id, Market, Position} from "../interfaces/morpho/IMorpho.sol";
 import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
 import {IWETH9} from "../interfaces/IWETH9.sol";
+import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /// @title MorphoAdapter
 /// @notice Adapter contract to migrate positions from Morpho to Compound III (Comet)
-import "hardhat/console.sol";
 
-contract MorphoAdapter is IProtocolAdapter, SwapModule {
+contract MorphoAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
+    /// -------- Libraries -------- ///
+
     using SharesMathLib for uint256;
     using SafeERC20 for IERC20;
 
@@ -45,7 +46,6 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      */
     struct MorphoBorrow {
         Id marketId;
-        // address loanToken;
         uint256 assetsAmount;
         SwapInputLimitParams swapParams;
     }
@@ -57,7 +57,6 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      */
     struct MorphoCollateral {
         Id marketId;
-        // address collateralToken;
         uint256 assetsAmount;
         SwapOutputLimitParams swapParams;
     }
@@ -119,18 +118,22 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param migrationData Encoded data containing the user's Morpho position details
      */
-    function executeMigration(address user, address comet, bytes calldata migrationData) external override {
+    function executeMigration(
+        address user,
+        address comet,
+        bytes calldata migrationData
+    ) external override nonReentrant {
         // Decode the migration data into an SparkPosition struct
         MorphoPosition memory position = abi.decode(migrationData, (MorphoPosition));
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
-            repayBorrow(user, position.borrows[i]);
+            _repayBorrow(user, position.borrows[i]);
         }
 
         // Migrate each collateral position
         for (uint256 i = 0; i < position.collateral.length; i++) {
-            migrateCollateral(user, comet, position.collateral[i]);
+            _migrateCollateral(user, comet, position.collateral[i]);
         }
     }
 
@@ -140,14 +143,12 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * @param user Address of the user whose borrow is being repaid
      * @param borrow The borrow position details
      */
-    function repayBorrow(address user, MorphoBorrow memory borrow) internal {
+    function _repayBorrow(address user, MorphoBorrow memory borrow) internal {
         MarketParams memory marketParams = LENDING_POOL.idToMarketParams(borrow.marketId);
 
         LENDING_POOL.accrueInterest(marketParams); // call
 
         Position memory position = LENDING_POOL.position(borrow.marketId, user);
-
-        console.log("BORROW_SHARES:", position.borrowShares);
 
         // Determine the amount to repay. If max value, repay the full borrow balance
         if (borrow.assetsAmount == type(uint256).max) {
@@ -160,8 +161,6 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
 
         // If a swap is required to obtain the repayment tokens
         if (borrow.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
-            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
             // Perform a swap to obtain the borrow token using the provided swap parameters
             _swapFlashloanToBorrowToken(
                 ISwapRouter.ExactOutputParams({
@@ -174,18 +173,6 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
             );
         }
 
-        // Get the underlying asset address of the debt token
-        // address loanAsset = marketParams.loanToken;
-        // uint256 repayAssets = borrow.assetsAmount;
-        console.log("REPAY_ASSETS", borrow.assetsAmount);
-
-        // Approve the Morpho Lending Pool to spend the repayment amount
-        console.log("MARKET_PARAMS", marketParams.loanToken);
-        console.log("LOAN_ASSET_BALANCE", IERC20(marketParams.loanToken).balanceOf(address(this)));
-
-        // IERC20(marketParams.loanToken).approve(address(LENDING_POOL), 0);
-
-        // IERC20(marketParams.loanToken).approve(address(LENDING_POOL), type(uint256).max);
         IERC20(marketParams.loanToken).safeIncreaseAllowance(address(LENDING_POOL), borrow.assetsAmount);
 
         LENDING_POOL.repay(marketParams, 0, position.borrowShares, user, new bytes(0));
@@ -201,7 +188,7 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param collateral The collateral position details
      */
-    function migrateCollateral(address user, address comet, MorphoCollateral memory collateral) internal {
+    function _migrateCollateral(address user, address comet, MorphoCollateral memory collateral) internal {
         MarketParams memory marketParams = LENDING_POOL.idToMarketParams(collateral.marketId);
         Position memory position = LENDING_POOL.position(collateral.marketId, user);
 

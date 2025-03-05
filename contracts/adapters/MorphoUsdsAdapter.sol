@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
@@ -11,12 +10,13 @@ import {ConvertModule} from "../modules/ConvertModule.sol";
 import {IMorpho, MarketParams, Id, Market, Position} from "../interfaces/morpho/IMorpho.sol";
 import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
 import {IWETH9} from "../interfaces/IWETH9.sol";
+import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /// @title MorphoUsdsAdapter
 /// @notice Adapter contract to migrate positions from Morpho to Compound III (Comet)
-import "hardhat/console.sol";
+contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, DelegateReentrancyGuard {
+    /// -------- Libraries -------- ///
 
-contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     using SharesMathLib for uint256;
     using SafeERC20 for IERC20;
 
@@ -128,7 +128,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param migrationData Encoded data containing the user's Morpho position details
      */
-    function executeMigration(address user, address comet, bytes calldata migrationData) external override {
+    function executeMigration(address user, address comet, bytes calldata migrationData) external nonReentrant {
         // Decode the migration data into an SparkPosition struct
         MorphoPosition memory position = abi.decode(migrationData, (MorphoPosition));
 
@@ -155,8 +155,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         LENDING_POOL.accrueInterest(marketParams); // call
 
         Position memory position = LENDING_POOL.position(borrow.marketId, user);
-
-        console.log("BORROW_SHARES:", position.borrowShares);
 
         // Determine the amount to repay. If max value, repay the full borrow balance
         if (borrow.assetsAmount == type(uint256).max) {
@@ -189,18 +187,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
             }
         }
 
-        // Get the underlying asset address of the debt token
-        // address loanAsset = marketParams.loanToken;
-        // uint256 repayAssets = borrow.assetsAmount;
-        console.log("REPAY_ASSETS", borrow.assetsAmount);
-
-        // Approve the Morpho Lending Pool to spend the repayment amount
-        console.log("MARKET_PARAMS", marketParams.loanToken);
-        console.log("LOAN_ASSET_BALANCE", IERC20(marketParams.loanToken).balanceOf(address(this)));
-
-        // IERC20(marketParams.loanToken).approve(address(LENDING_POOL), 0);
-
-        // IERC20(marketParams.loanToken).approve(address(LENDING_POOL), type(uint256).max);
         IERC20(marketParams.loanToken).safeIncreaseAllowance(address(LENDING_POOL), borrow.assetsAmount);
 
         LENDING_POOL.repay(marketParams, 0, position.borrowShares, user, new bytes(0));
@@ -240,7 +226,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                 _convertDaiToUsds(withdrawAmount);
                 IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, withdrawAmount);
                 IComet(comet).supplyTo(user, ConvertModule.USDS, withdrawAmount);
-                return;
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
                     ISwapRouter.ExactInputParams({
@@ -251,9 +236,15 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         deadline: block.timestamp
                     })
                 );
-                IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
-                IComet(comet).supplyTo(user, tokenOut, amountOut);
-                return;
+
+                if (tokenOut == ConvertModule.DAI && IComet(comet).baseToken() == ConvertModule.USDS) {
+                    _convertDaiToUsds(amountOut);
+                    IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, amountOut);
+                    IComet(comet).supplyTo(user, ConvertModule.USDS, amountOut);
+                } else {
+                    IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+                    IComet(comet).supplyTo(user, tokenOut, amountOut);
+                }
             }
             // If the collateral token is the native token, wrap the native token and supply it to Comet
         } else if (collateralAsset == NATIVE_TOKEN) {
@@ -262,7 +253,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
             // Approve the wrapped native token to be spent by Comet
             WRAPPED_NATIVE_TOKEN.approve(comet, withdrawAmount);
             IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), withdrawAmount);
-            return;
             // If no swap is required, supply the collateral directly to Comet
         } else {
             IERC20(collateralAsset).safeIncreaseAllowance(comet, withdrawAmount);

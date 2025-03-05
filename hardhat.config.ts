@@ -99,6 +99,7 @@ const config: HardhatUserConfig = {
             {
                 version: "0.8.28",
                 settings: {
+                    // viaIR: true,
                     optimizer: {
                         enabled: ENABLED_OPTIMIZER,
                         runs: OPTIMIZER_RUNS
@@ -109,6 +110,7 @@ const config: HardhatUserConfig = {
             {
                 version: "0.8.16",
                 settings: {
+                    // viaIR: true,
                     optimizer: {
                         enabled: ENABLED_OPTIMIZER,
                         runs: OPTIMIZER_RUNS
@@ -161,12 +163,15 @@ const config: HardhatUserConfig = {
         mainnet: {
             chainId: 1,
             url: MAINNET_URL,
-            accounts: [...MAINNET_KEYS]
+            accounts: [...MAINNET_KEYS],
+            // gasPrice: 734000000
+            gasPrice: 1788000000
         },
         polygon: {
             chainId: 137,
             url: MAINNET_URL,
-            accounts: [...MAINNET_KEYS]
+            accounts: [...MAINNET_KEYS],
+            gasPrice: 128130000000
         },
         arbitrumOne: {
             chainId: 42161,

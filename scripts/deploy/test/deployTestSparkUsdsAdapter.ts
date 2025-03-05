@@ -23,46 +23,46 @@ const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 // };
 
 async function deploy() {
-    // const [deployer] = await ethers.getSigners();
+    const [deployer] = await ethers.getSigners();
 
     const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
         process.env.npm_config_args_network || "hardhat"
     ];
     const args = config[CONTRACT_NAME];
 
-    // console.log("\n --- Deployed data --- \n");
-    // console.log("* ", deployer.address, "- Deployer address");
-    // console.log("* ", hre.network.name, "- Network name");
-    // console.log("* ", CONTRACT_NAME, "- Contract name");
-    // console.log("* Arguments: ", args);
-    // console.log("\n --- ------- ---- --- ");
+    console.log("\n --- Deployed data --- \n");
+    console.log("* ", deployer.address, "- Deployer address");
+    console.log("* ", hre.network.name, "- Network name");
+    console.log("* ", CONTRACT_NAME, "- Contract name");
+    console.log("* Arguments: ", args);
+    console.log("\n --- ------- ---- --- ");
 
-    // const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    // const contract = await Contract.connect(deployer).deploy(args);
-    // const deployTransaction = (await contract.deployed()).deployTransaction.wait();
+    const Contract = await ethers.getContractFactory(CONTRACT_NAME);
+    const contract = await Contract.connect(deployer).deploy(args);
+    const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
-    // console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
-    // const saveAddress = getAddressSaver(PATH_TO_FILE, network.name, true);
-    // saveAddress(
-    //     CONTRACT_NAME,
-    //     {
-    //         address: contract.address,
-    //         deployedBlock: (await deployTransaction).blockNumber,
-    //         chainId: ethers.provider.network.chainId
-    //     },
-    //     false
-    // );
+    console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
+    const saveAddress = getAddressSaver(PATH_TO_FILE, network.name, true);
+    saveAddress(
+        CONTRACT_NAME,
+        {
+            address: contract.address,
+            deployedBlock: (await deployTransaction).blockNumber,
+            chainId: ethers.provider.network.chainId
+        },
+        false
+    );
 
     console.log("\nDeployment is completed.");
-    // await verify(contract.address, [args]);
-    await verify("0xC90BE534054fA3b2420645ffEb05705dDe0cd530", [args]);
+    await verify(contract.address, [args]);
+    // await verify("0xC90BE534054fA3b2420645ffEb05705dDe0cd530", [args]);
     console.log("\nDone.");
 
-//     // Add the address to the Migration contract.
-//     console.log("Adding the adapter to the Migration contract...");
-//     const migration = MigratorV2__factory.connect("0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e", deployer);
-//     await migration.setAdapter(contract.address);
-//     console.log("Adapter is added to the Migration contract.");
+    //     // Add the address to the Migration contract.
+    //     console.log("Adding the adapter to the Migration contract...");
+    //     const migration = MigratorV2__factory.connect("0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e", deployer);
+    //     await migration.setAdapter(contract.address);
+    //     console.log("Adapter is added to the Migration contract.");
 }
 
 deploy().catch((error) => {

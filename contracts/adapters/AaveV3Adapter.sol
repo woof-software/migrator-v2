@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IAavePool} from "../interfaces/aave/IAavePool.sol";
 import {IAavePoolDataProvider} from "../interfaces/aave/IAavePoolDataProvider.sol";
@@ -11,10 +11,15 @@ import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
 import {IWETH9} from "../interfaces/IWETH9.sol";
+import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /// @title AaveV3Adapter
 /// @notice Adapter contract to migrate positions from Aave V3 to Compound III (Comet)
-contract AaveV3Adapter is IProtocolAdapter, SwapModule {
+contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
+    /// -------- Libraries -------- ///
+
+    using SafeERC20 for IERC20;
+
     /// --------Custom Types-------- ///
 
     /**
@@ -127,18 +132,18 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param migrationData Encoded data containing the user's Aave V3 position details
      */
-    function executeMigration(address user, address comet, bytes calldata migrationData) external override {
+    function executeMigration(address user, address comet, bytes calldata migrationData) external nonReentrant {
         // Decode the migration data into an AaveV3Position struct
         AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
-            repayBorrow(user, position.borrows[i]);
+            _repayBorrow(user, position.borrows[i]);
         }
 
         // Migrate each collateral position
         for (uint256 i = 0; i < position.collaterals.length; i++) {
-            migrateCollateral(user, comet, position.collaterals[i]);
+            _migrateCollateral(user, comet, position.collaterals[i]);
         }
     }
 
@@ -148,7 +153,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * @param user Address of the user whose borrow is being repaid
      * @param borrow The borrow position details
      */
-    function repayBorrow(address user, AaveV3Borrow memory borrow) internal {
+    function _repayBorrow(address user, AaveV3Borrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
         uint256 repayAmount = borrow.amount == type(uint256).max
             ? IERC20(borrow.debtToken).balanceOf(user)
@@ -172,8 +177,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
         address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Aave Lending Pool to spend the repayment amount
-        IDebtToken(underlyingAsset).approve(address(LENDING_POOL), repayAmount);
-        // IDebtToken(underlyingAsset).approve(address(LENDING_POOL), type(uint256).max);
+        IERC20(underlyingAsset).safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
@@ -189,7 +193,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * @param comet Address of the Compound III (Comet) contract
      * @param collateral The collateral position details
      */
-    function migrateCollateral(address user, address comet, AaveV3Collateral memory collateral) internal {
+    function _migrateCollateral(address user, address comet, AaveV3Collateral memory collateral) internal {
         // Determine the amount of collateral to migrate. If max value, migrate the full collateral balance
         uint256 aTokenAmount = collateral.amount == type(uint256).max
             ? IAToken(collateral.aToken).balanceOf(user)
@@ -214,7 +218,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
                     deadline: block.timestamp
                 })
             );
-            IERC20(tokenOut).approve(comet, amountOut);
+            IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
 
             IComet(comet).supplyTo(user, tokenOut, amountOut);
             return;
@@ -229,7 +233,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
             return;
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(underlyingAsset).approve(comet, aTokenAmount);
+            IERC20(underlyingAsset).safeIncreaseAllowance(comet, aTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
         }
     }
