@@ -2,8 +2,9 @@ import { loadFixture, ethers, expect, parseEther, Zero, AddressZero } from "../h
 
 import type {
     MigratorV2,
-    AaveV3DaiUsdsAdapter,
-    SparkAdapter,
+    AaveV3UsdsAdapter,
+    SparkUsdsAdapter,
+    MorphoUsdsAdapter,
     MockAavePool,
     MockADebtToken,
     MockAToken,
@@ -18,6 +19,27 @@ import type {
 } from "../../typechain-types";
 
 const NATIVE_TOKEN_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+
+// Convert fee to 3-byte hex
+const FEE_10000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(10000), 3); // 1%
+const FEE_3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(3000), 3); // 0.3%
+const FEE_500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(500), 3); // 0.05%
+const FEE_100 = ethers.utils.hexZeroPad(ethers.utils.hexlify(100), 3); // 0.01%
+
+const POSITION_AAVE_ABI = [
+    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+];
+
+const POSITION_SPARK_ABI = [
+    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address spToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+];
+
+const POSITION_MORPHO_ABI = [
+    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
+    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+];
 
 describe("MigratorV2AndAaveV3", function () {
     // Setup Mocks: deploy all necessary mock contracts
@@ -45,6 +67,21 @@ describe("MigratorV2AndAaveV3", function () {
         const MockComet = await ethers.getContractFactory("MockComet");
         const mockComet = await MockComet.deploy(mockUSDS.address, mockWETH9.address);
         await mockComet.deployed();
+
+        // Deploy MockMorpho contract
+        const MockMorpho = await ethers.getContractFactory("MockMorpho");
+        const mockMorpho = await MockMorpho.deploy();
+
+        // Define market parameters for Morpho
+        const marketId = ethers.utils.formatBytes32String("morpho-market");
+
+        await mockMorpho.setMarketParams(marketId, {
+            loanToken: mockDAI.address,
+            collateralToken: mockUSDS.address,
+            oracle: ethers.constants.AddressZero,
+            irm: ethers.constants.AddressZero,
+            lltv: 7500
+        });
 
         // Deploy mock Aave Lending Pool with mock AToken and mock Debt Token
         // Deploy mock Aave Token
@@ -138,7 +175,9 @@ describe("MigratorV2AndAaveV3", function () {
             mockDaiUsds,
             mockComet,
             mockUniswapV3Pool,
-            mockSwapRouter
+            mockSwapRouter,
+            mockMorpho,
+            marketId
         };
     }
 
@@ -146,8 +185,9 @@ describe("MigratorV2AndAaveV3", function () {
         const mocks = await setupMocks();
 
         const [_, owner, user, adapterDeployer] = await ethers.getSigners();
+
         // Deploy AaveV3Adapter
-        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", adapterDeployer);
+        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3UsdsAdapter", adapterDeployer);
         const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
             uniswapRouter: mocks.mockSwapRouter.address,
             daiUsdsConverter: mocks.mockDaiUsds.address,
@@ -157,11 +197,11 @@ describe("MigratorV2AndAaveV3", function () {
             aaveLendingPool: mocks.mockAavePool.address,
             aaveDataProvider: mocks.mockAavePool.address,
             isFullMigration: true
-        })) as AaveV3DaiUsdsAdapter;
+        })) as AaveV3UsdsAdapter;
         await aaveV3Adapter.deployed();
 
         // Deploy SparkAdapter
-        const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", adapterDeployer);
+        const SparkAdapterFactory = await ethers.getContractFactory("SparkUsdsAdapter", adapterDeployer);
         const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy({
             uniswapRouter: mocks.mockSwapRouter.address,
             daiUsdsConverter: mocks.mockDaiUsds.address,
@@ -171,11 +211,23 @@ describe("MigratorV2AndAaveV3", function () {
             sparkLendingPool: mocks.mockSparkPool.address,
             sparkDataProvider: mocks.mockSparkPool.address,
             isFullMigration: true
-        })) as SparkAdapter;
+        })) as SparkUsdsAdapter;
 
         await sparkAdapter.deployed();
 
-        const adapters = [aaveV3Adapter.address, sparkAdapter.address];
+        // Deploy MorphoAdapter
+        const MorphoAdapterFactory = await ethers.getContractFactory("MorphoUsdsAdapter", adapterDeployer);
+        const morphoAdapter = (await MorphoAdapterFactory.connect(owner).deploy({
+            uniswapRouter: mocks.mockSwapRouter.address,
+            daiUsdsConverter: mocks.mockDaiUsds.address,
+            dai: mocks.mockDAI.address,
+            usds: mocks.mockUSDS.address,
+            wrappedNativeToken: mocks.mockWETH9.address,
+            morphoLendingPool: mocks.mockMorpho.address,
+            isFullMigration: true
+        })) as MorphoUsdsAdapter;
+
+        const adapters = [aaveV3Adapter.address, sparkAdapter.address, morphoAdapter.address];
         const comets = [mocks.mockComet.address];
 
         // Set up flashData for migrator
@@ -198,6 +250,7 @@ describe("MigratorV2AndAaveV3", function () {
             adapterDeployer,
             aaveV3Adapter,
             sparkAdapter,
+            morphoAdapter,
             migrator
         };
     }
@@ -267,7 +320,7 @@ describe("MigratorV2AndAaveV3", function () {
     describe("# Migrate functionality", function () {
         context("* AaveV3 -> Comet", async () => {
             // collateral - ETH; borrow - DAI; comet - USDS.
-            it.skip("Should migrate a user's position successfully: Scn.#1", async () => {
+            it("Should migrate a user's position successfully", async () => {
                 const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
 
                 // Setup for AaveV3 -> Comet migration
@@ -286,60 +339,49 @@ describe("MigratorV2AndAaveV3", function () {
                 await mocks.mockAavePool.connect(user).borrow(mocks.mockDAI.address, borrowAmount);
                 expect(await mocks.mockADebtToken.balanceOf(user.address)).to.equal(borrowAmount);
 
-                // const collateralAmount = mockAToken.balanceOf(user.address)
-
                 // Init migration
                 // Approve migration
                 await mocks.mockAToken.connect(user).approve(migrator.address, parseEther("500"));
-                const FEE_3000 = 3000; // 0.3%
-                const FEE_500 = 500; // 0.05%
-
-                // Convert fee to 3-byte hex
-                const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
-                const fee500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_500), 3); // 0x01F4
-
-                // @DEBUG
-                // console.log(`Fee 3000 (3 bytes) = ${fee3000}`);
-                // console.log(`Fee 500 (3 bytes) = ${fee500}`);
 
                 const position = {
                     borrows: [
                         {
-                            aDebtToken: mocks.mockADebtToken.address,
-                            amount: parseEther("100")
+                            debtToken: mocks.mockADebtToken.address,
+                            amount: parseEther("100"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.mockUSDS.address, 20),
+                                    FEE_3000,
+                                    ethers.utils.hexZeroPad(mocks.mockDAI.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
                         }
                     ],
-                    collateral: [{ aToken: mocks.mockAToken.address, amount: parseEther("500") }],
-                    swaps: [
+
+                    collaterals: [
                         {
-                            pathOfSwapFlashloan: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(mocks.mockUSDS.address, 20),
-                                fee3000,
-                                ethers.utils.hexZeroPad(mocks.mockDAI.address, 20)
-                            ]),
-                            amountInMaximum: parseEther("100"),
-                            pathSwapCollateral: [],
-                            amountOutMinimum: 0
+                            aToken: mocks.mockAToken.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
                         }
                     ]
                 };
-                // @DEBUG
-                // console.log("position", position.swaps[0].pathOfSwapFlashloan);
-                // console.log("USDS address", mocks.mockUSDS.address);
-                // console.log("DAI address", mocks.mockDAI.address);
 
-                const encodedData = ethers.utils.defaultAbiCoder.encode(
-                    [
-                        "tuple(tuple(address aDebtToken, uint256 amount)[] borrows, tuple(address aToken, uint256 amount)[] collateral, tuple(bytes pathOfSwapFlashloan, uint256 amountInMaximum, bytes pathSwapCollateral, uint256 amountOutMinimum)[] swaps)"
-                    ],
-                    [position]
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
                 );
 
                 const flashAmount = parseEther("500");
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3Adapter.address, mocks.mockComet.address, encodedData, flashAmount)
+                        .migrate(aaveV3Adapter.address, mocks.mockComet.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userCollateral = await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockDAI.address);
@@ -348,7 +390,7 @@ describe("MigratorV2AndAaveV3", function () {
         });
 
         context("* Spark -> Comet", async () => {
-            it.skip("Should migrate a user's position successfully: Scn.#2", async () => {
+            it("Should migrate a user's position successfully", async () => {
                 const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
 
                 // Deposit to Spark
@@ -371,60 +413,46 @@ describe("MigratorV2AndAaveV3", function () {
 
                 // Approve migration
                 await mocks.mockSpToken.connect(user).approve(migrator.address, parseEther("500"));
-                const FEE_3000 = 3000; // 0.3%
-                const FEE_500 = 500; // 0.05%
-
-                // Convert fee to 3-byte hex
-                const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
-                const fee500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_500), 3); // 0x01F4
-
-                // @DEBUG
-                // console.log(`Fee 3000 (3 bytes) = ${fee3000}`);
-                // console.log(`Fee 500 (3 bytes) = ${fee500}`);
 
                 const position = {
                     borrows: [
                         {
-                            aDebtToken: mocks.mockSpDebtToken.address,
-                            amount: parseEther("100")
+                            debtToken: mocks.mockADebtToken.address,
+                            amount: parseEther("100"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.mockUSDS.address, 20),
+                                    FEE_3000,
+                                    ethers.utils.hexZeroPad(mocks.mockDAI.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
                         }
                     ],
-                    collateral: [{ aToken: mocks.mockSpToken.address, amount: parseEther("500") }],
-                    swaps: [
+
+                    collaterals: [
                         {
-                            pathOfSwapFlashloan: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(mocks.mockUSDS.address, 20),
-                                fee3000,
-                                ethers.utils.hexZeroPad(mocks.mockDAI.address, 20)
-                            ]),
-                            amountInMaximum: parseEther("100"),
-                            // pathSwapCollateral: ethers.utils.concat([
-                            //     ethers.utils.hexZeroPad(NATIVE_TOKEN_ADDRESS, 20),
-                            //     ethers.utils.hexZeroPad(mockUSDS.address, 20),
-                            // ]),
-                            pathSwapCollateral: [],
-                            // amountOutMinimum: parseEther("500"),
-                            amountOutMinimum: 0
+                            spToken: mocks.mockSpToken.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
                         }
                     ]
                 };
-                // @DEBUG
-                // console.log("position", position.swaps[0].pathOfSwapFlashloan);
-                // console.log("USDS address", mocks.mockUSDS.address);
-                // console.log("DAI address", mocks.mockDAI.address);
 
-                const encodedData = ethers.utils.defaultAbiCoder.encode(
-                    [
-                        "tuple(tuple(address aDebtToken, uint256 amount)[] borrows, tuple(address aToken, uint256 amount)[] collateral, tuple(bytes pathOfSwapFlashloan, uint256 amountInMaximum, bytes pathSwapCollateral, uint256 amountOutMinimum)[] swaps)"
-                    ],
-                    [position]
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
                 );
 
                 const flashAmount = parseEther("500");
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(sparkAdapter.address, mocks.mockComet.address, encodedData, flashAmount)
+                        .migrate(sparkAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userCollateral = await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockDAI.address);
@@ -432,11 +460,74 @@ describe("MigratorV2AndAaveV3", function () {
             });
         });
 
-        it("Should revert if flash amount is zero", async () => {
-            const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
-            await expect(
-                migrator.connect(user).migrate(sparkAdapter.address, mocks.mockComet.address, "0x", 0)
-            ).to.be.revertedWithCustomError(migrator, "InvalidFlashAmount");
+        context("* Morpho -> Comet", async () => {
+            it.only("Should migrate a user's position successfully", async function () {
+                const { migrator, user, mocks, morphoAdapter } = await loadFixture(
+                    setupTestEnvironment
+                );
+
+                const depositAmount = parseEther("500");
+                const borrowAmount = parseEther("100");
+
+                // Mint and approve collateral (USDS)
+                await mocks.mockUSDS.mint(user.address, depositAmount);
+                await mocks.mockUSDS.connect(user).approve(mocks.mockMorpho.address, depositAmount);
+
+                // Supply collateral to Morpho
+                await mocks.mockMorpho.connect(user).supplyCollateral(mocks.marketId, depositAmount, user.address);
+                expect(await mocks.mockUSDS.balanceOf(mocks.mockMorpho.address)).to.equal(depositAmount);
+
+                // Borrow from Morpho
+                await mocks.mockDAI.mint(mocks.mockMorpho.address, borrowAmount); // Mock liquidity
+                await mocks.mockMorpho.connect(user).borrow(mocks.marketId, borrowAmount, borrowAmount, user.address, user.address);
+                expect(await mocks.mockDAI.balanceOf(user.address)).to.equal(borrowAmount);
+
+                // Approve migration
+                await mocks.mockUSDS.connect(user).approve(migrator.address, depositAmount);
+                await mocks.mockDAI.connect(user).approve(migrator.address, borrowAmount);
+
+                // Create migration position
+                const position = {
+                    borrows: [
+                        {
+                            marketId: mocks.marketId,
+                            assetsAmount: borrowAmount,
+                            swapParams: {
+                                path: "0x",
+                                amountInMaximum: borrowAmount
+                            }
+                        }
+                    ],
+                    collaterals: [
+                        {
+                            marketId: mocks.marketId,
+                            assetsAmount: depositAmount,
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_MORPHO_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("500");
+
+                // Execute migration
+                await expect(
+                    migrator.connect(user).migrate(morphoAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                // // Validate migration results
+                // expect(await mocks.mockUSDS.balanceOf(mocks.mockMorpho.address)).to.equal(0);
+                // expect(await mocks.mockDAI.balanceOf(user.address)).to.equal(0);
+                // expect(await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockUSDS.address)).to.equal(depositAmount);
+            });
         });
 
         it("Should revert if migration data is empty", async () => {

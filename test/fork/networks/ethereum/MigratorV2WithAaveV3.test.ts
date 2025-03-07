@@ -26,8 +26,7 @@ import {
     IAToken,
     IDebtToken__factory,
     IDebtToken,
-    UniswapV3PathFinder,
-    UniswapV3PathFinderStage
+    UniswapV3PathFinder
 } from "../../../../typechain-types";
 
 import {
