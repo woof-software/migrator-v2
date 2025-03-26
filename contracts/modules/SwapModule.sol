@@ -21,8 +21,6 @@ abstract contract SwapModule is CommonErrors {
     struct SwapInputLimitParams {
         bytes path;
         uint256 amountInMaximum;
-        bytes pathSwapCollateral;
-        uint256 amountOutMinimum;
     }
 
     struct SwapOutputLimitParams {
