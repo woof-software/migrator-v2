@@ -1,3 +1,8 @@
 module.exports = {
-    skipFiles: ['test/fuzzing/KeepersCounterEchidnaTest.sol', 'test/LinkToken.sol', 'test/MockOracle.sol', 'test/MockV3Aggregator.sol', 'test/VRFCoordinatorV2Mock.sol'],
+    configureYulOptimizer: true, // (Experimental). Should resolve "stack too deep" in projects using ABIEncoderV2.
+    skipFiles: ['comet_migrator_v2_v3/', 'mocks/', 'interfaces/', 'libs/', 'test/'],
+    mocha: {
+        fgrep: "[skip-on-coverage]",
+        invert: true
+    }
 };
