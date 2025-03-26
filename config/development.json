@@ -42,7 +42,9 @@
             },
             "TestUniswapV3PathFinder": {
                 "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+                "dai": "0x0000000000000000000000000000000000000000",
+                "usds": "0x0000000000000000000000000000000000000000"
             }
         },
         "base": {
@@ -96,16 +98,18 @@
             },
             "TestUniswapV3PathFinder": {
                 "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
-                "quoterV2": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"
+                "quoterV2": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+                "dai": "0x0000000000000000000000000000000000000000",
+                "usds": "0x0000000000000000000000000000000000000000"
             }
         },
         "ethereum": {
             "TestMigratorV2": {
                 "multisig": "0x535163Ba9d4Bb7Fb510Ecf66eb890F2816B6B8b6",
                 "adapters": [
-                    "0x2b36a96c9E7177A4536C1cB9A50Fbc9f8D9A77E2",
-                    "0x30e7d25774507630733d1E277E7B664b1Dee757e",
-                    "0xD655Fb965aC05552e83A4c73A1F832024DC5F515"
+                    "0x147505db1811F3eE7aB5bb5d9Fed79f257F018E7",
+                    "0xc59608dc2660241Af21accCC0222a3288C7A0F4c",
+                    "0xd55b9e59bFf3b2dE058e95825066C661e7348b2e"
                 ],
                 "comets": [
                     "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
@@ -136,9 +140,9 @@
                         "isToken0": true
                     },
                     {
-                        "liquidityPool": "0xe9F1E2EF814f5686C30ce6fb7103d0F780836C67",
-                        "baseToken": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-                        "isToken0": false
+                        "liquidityPool": "0x6c6Bc977E13Df9b0de53b251522280BB72383700",
+                        "baseToken": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                        "isToken0": true
                     }
                 ]
             },
@@ -173,7 +177,9 @@
             },
             "TestUniswapV3PathFinder": {
                 "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+                "dai": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                "usds": "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
             }
         },
         "polygon": {
@@ -203,7 +209,9 @@
             },
             "TestUniswapV3PathFinder": {
                 "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+                "dai": "0x0000000000000000000000000000000000000000",
+                "usds": "0x0000000000000000000000000000000000000000"
             }
         },
         "optimism": {
@@ -242,7 +250,9 @@
             },
             "TestUniswapV3PathFinder": {
                 "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+                "quoterV2": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+                "dai": "0x0000000000000000000000000000000000000000",
+                "usds": "0x0000000000000000000000000000000000000000"
             }
         }
     }

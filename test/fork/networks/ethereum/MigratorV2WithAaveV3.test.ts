@@ -36,6 +36,7 @@ import {
     QuoterV2__factory,
     UniswapV3Factory__factory
 } from "../../types/contracts";
+import c from "config";
 
 /**
  *  **Fork Tests: How to Run**
@@ -204,8 +205,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             },
             {
                 liquidityPool: uniswapContractAddresses.pools.DAI_USDS, // Uniswap V3 pool DAI / USDS
-                baseToken: tokenAddresses.USDS, // USDS
-                isToken0: false
+                baseToken: tokenAddresses.DAI, // DAI
+                isToken0: true
             }
         ];
 
@@ -217,8 +218,17 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             flashData
         )) as MigratorV2;
         await migratorV2.deployed();
-
         expect(migratorV2.address).to.be.properAddress;
+
+        const UniswapV3PathFinder = await ethers.getContractFactory("UniswapV3PathFinder");
+        const uniswapV3PathFinder = (await UniswapV3PathFinder.connect(user).deploy(
+            uniswapContractAddresses.factory,
+            uniswapContractAddresses.quoterV2,
+            tokenAddresses.DAI,
+            tokenAddresses.USDS
+        )) as UniswapV3PathFinder;
+
+        await uniswapV3PathFinder.deployed();
 
         // Connecting to all necessary contracts for testing
         const aaveV3Pool = AavePool__factory.connect(aaveContractAddresses.pool, user);
@@ -249,225 +259,12 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             aaveV3Pool,
             wrappedTokenGateway,
             cUSDCv3Contract,
-            cUSDSv3Contract
+            cUSDSv3Contract,
+            uniswapV3PathFinder
         };
     }
 
     context("Migrate positions from AaveV3 to Compound III", function () {
-        it.only(
-            "Scn.#01: uniswapV3PathFinder | get path for WBTC to LINK | connector: WETH, USDC, USDT",
-            async function () {
-                const { tokenAddresses, tokenDecimals, migratorV2, user, uniswapContractAddresses } = await loadFixture(
-                    setupEnv
-                );
-
-                const amountIn = parseUnits("0.15", tokenDecimals.WBTC); // 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
-                // const amountOut = parseUnits("2", tokenDecimals.WETH); // 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
-                const amountOut = parseUnits("12548.45", tokenDecimals.USDT);
-
-                // const factory = UniswapV3Factory__factory.connect(uniswapContractAddresses.factory, user);
-
-                // const poolAddress = await factory.getPool(tokenAddresses.WETH, tokenAddresses.LINK, 100);
-
-                // const pathSingle = await pathFinder.callStatic.getBestSingleSwapPath(
-                //     tokenAddresses.WBTC,
-                //     tokenAddresses.WETH,
-                //     amountIn,
-                //     AddressZero,
-                //     { gasLimit: 30000000 }
-                // );
-
-                // 12494563993
-
-                // 12541236290
-
-                // 14953462
-
-                // 15674550
-
-                // console.log("pathSingle:", pathSingle);
-                // console.log("bestAmountOut:", formatUnits(pathSingle.amountOut, tokenDecimals.WETH));
-
-                const UniswapV3PathFinder_ = await ethers.getContractFactory("UniswapV3PathFinder");
-                const pathFinder_ = (await UniswapV3PathFinder_.connect(user).deploy(
-                    uniswapContractAddresses.factory,
-                    uniswapContractAddresses.quoterV2
-                )) as UniswapV3PathFinder;
-
-                const maxGasEstimate = BigNumber.from(500000);
-
-                const singlePathExpectIn = await pathFinder_.callStatic.getBestSingleSwapPath(
-                    {
-                        tokenIn: tokenAddresses.WBTC,
-                        tokenOut: tokenAddresses.USDT,
-                        amountIn: amountIn,
-                        amountOut: Zero,
-                        excludedPool: AddressZero,
-                        maxGasEstimate
-                    },
-                    { gasLimit: 30000000 }
-                );
-
-                console.log("^^singlePathExpectIn:", singlePathExpectIn);
-                console.log("^^bestAmountOut:", formatUnits(singlePathExpectIn.estimatedAmount, tokenDecimals.USDT)); // 0.15087684
-
-                const singlePathExpectOut = await pathFinder_.callStatic.getBestSingleSwapPath(
-                    {
-                        tokenIn: tokenAddresses.WBTC,
-                        tokenOut: tokenAddresses.USDT,
-                        amountIn: Zero,
-                        amountOut: amountOut,
-                        excludedPool: AddressZero,
-                        maxGasEstimate
-                    },
-                    { gasLimit: 30000000 }
-                );
-
-                console.log("^^singlePathExpectOut:", singlePathExpectOut);
-                console.log("^^bestAmountIn:", formatUnits(singlePathExpectOut.estimatedAmount, tokenDecimals.WBTC)); // 14287.941962
-
-                const multiPathExpectIn = await pathFinder_.callStatic.getBestMultiSwapPath(
-                    {
-                        tokenIn: tokenAddresses.WBTC,
-                        tokenOut: tokenAddresses.USDT,
-                        connectors: [tokenAddresses.WETH],
-                        amountIn: amountIn,
-                        amountOut: Zero,
-                        excludedPool: AddressZero,
-                        maxGasEstimate
-                    },
-                    { gasLimit: 30000000 }
-                );
-
-                console.log("**multiPathExpectIn:", multiPathExpectIn);
-                console.log("**bestAmountOut:", formatUnits(multiPathExpectIn.estimatedAmount, tokenDecimals.USDT)); // 14287.941962
-
-                const multiPathExpectOut = await pathFinder_.callStatic.getBestMultiSwapPath(
-                    {
-                        tokenIn: tokenAddresses.WBTC,
-                        // tokenOut: tokenAddresses.WETH,
-                        tokenOut: tokenAddresses.USDT,
-                        connectors: [tokenAddresses.WETH],
-                        amountIn: Zero,
-                        amountOut: amountOut,
-                        excludedPool: AddressZero,
-                        maxGasEstimate
-                    },
-                    { gasLimit: 30000000 }
-                );
-
-                console.log("^^multiPathExpectOut:", multiPathExpectOut);
-                console.log("^^bestAmountIn:", formatUnits(multiPathExpectOut.estimatedAmount, tokenDecimals.WBTC)); // 0.15087684
-
-                console.log("\n---------------------\n");
-
-                const quoterV2 = QuoterV2__factory.connect(uniswapContractAddresses.quoterV2, user);
-                const factory = UniswapV3Factory__factory.connect(uniswapContractAddresses.factory, user);
-
-                // console.log("Poll_1:", await factory.getPool(tokenAddresses.WETH, tokenAddresses.USDC, 3000));
-
-                const tokenIn = tokenAddresses.WBTC;
-                const tokenOut = tokenAddresses.USDT;
-
-                // const amountIn_ = parseUnits("0.5", tokenDecimals.WBTC);
-                // const amountOut_ = parseUnits("2", tokenDecimals.WETH);
-
-                console.log("Poll_2:", await factory.getPool(tokenIn, tokenOut, 500));
-
-                const pathIn = ethers.utils.concat([
-                    ethers.utils.hexZeroPad(tokenIn, 20),
-                    // FEE_500,
-                    // ethers.utils.hexZeroPad(tokenAddresses.USDT, 20),
-                    FEE_500,
-                    ethers.utils.hexZeroPad(tokenOut, 20)
-                ]);
-
-                const pathOut = ethers.utils.concat([
-                    ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
-                    FEE_500,
-                    ethers.utils.hexZeroPad(tokenOut, 20)
-                    // ethers.utils.hexZeroPad(tokenIn, 20)
-                ]);
-
-                // 0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8514910771af9ca656af840dff83e8264ecf986ca
-                // 0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4514910771af9ca656af840dff83e8264ecf986ca
-                // console.log("Path:", ethers.utils.hexlify(path));
-                // console.log("---Path:", path);
-
-                // const quote = await quoter.callStatic.quoteExactInput(path, amountIn); // ~ 955 USD
-                // const quoteV2 = await quoterV2.callStatic.quoteExactInput("0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8514910771af9ca656af840dff83e8264ecf986ca", amountIn); // ~ 955 USD
-
-                const quoteIn = await quoterV2.callStatic.quoteExactInput(pathIn, amountIn);
-                // // const quoteIn = await quoterV2.callStatic.quoteExactInput(
-                // //     "0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4dac17f958d2ee523a2206206994597c13d831ec7000064c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-                // //     amountIn
-                // // );
-                console.log("pathIn - ", ethers.utils.hexlify(pathIn));
-                console.log("quoteIn:amountIn - ", formatUnits(quoteIn.amountOut, tokenDecimals.USDT));
-
-                // const quoteOut = await quoterV2.callStatic.quoteExactOutput(pathOut, amountOut);
-                const quoteOut = await quoterV2.callStatic.quoteExactOutput(
-                    "0xdac17f958d2ee523a2206206994597c13d831ec7002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb82260fac5e5542a773aa44fbcfedf7c193bc2c599",
-                    amountOut
-                );
-                console.log("pathOut - ", ethers.utils.hexlify(pathOut));
-                console.log("QuoteOut:amountOut - ", formatUnits(quoteOut.amountIn, tokenDecimals.WBTC));
-            }
-        ).timeout(0);
-        // it.skip(
-        //     "Scn.#0: uniswapV3PathFinder | get path for WBTC to LINK | connector: WETH, USDC, USDT",
-        //     async function () {
-        //         const {
-        //             user,
-        //             treasuryAddresses,
-        //             tokenAddresses,
-        //             tokenContracts,
-        //             tokenDecimals,
-        //             aaveContractAddresses,
-        //             aTokenContracts,
-        //             debtTokenContracts,
-        //             uniswapContractAddresses,
-        //             aaveV3Adapter,
-        //             migratorV2,
-        //             aaveV3Pool,
-        //             wrappedTokenGateway, // 3652940205146178521, 52268054414917721654
-        //             cUSDCv3Contract,
-        //             pathFinder
-        //         } = await loadFixture(setupEnv);
-
-        //         // const testPath = ethers.utils.concat([
-        //         //     ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
-        //         //     FEE_500,
-        //         //     ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
-        //         //     FEE_100,
-        //         //     ethers.utils.hexZeroPad(tokenAddresses.LINK, 20)
-        //         // ]);
-
-        //         const amountIn = parseUnits("0.01", tokenDecimals.WBTC);
-        //         const maxGasEstimate = 208100000000000;
-
-        //         const path = await pathFinder.callStatic.getBestSwapPath(
-        //             // const path = await pathFinder.getBestSwapPath(
-        //             tokenAddresses.WBTC,
-        //             tokenAddresses.LINK,
-        //             [tokenAddresses.WETH],
-        //             // [tokenAddresses.WETH], // 52268054414917721654 // 3652940205146178521
-        //             amountIn,
-        //             // ["0x618004783d422DfB792D07D742549D5A24648dF2"], // Uniswap V3 pools: WBTC / LINK 0.3% fee
-        //             [
-        //                 "0x618004783d422dfb792d07d742549d5a24648df2"
-        //                 // "0xe6ff8b9a37b0fab776134636d9981aa778c4e718",
-        //                 // "0x4585fe77225b41b697c938b018e2ac67ac5a20c0",
-        //                 // "0xcbcdf9626bc03e24f779434178a73a0b4bad62ed",
-        //                 // "0x6ab3bba2f41e7eaa262fa5a1a9b3932fa161526f"
-        //             ], // Uniswap V3 pools: WBTC / LINK 0.3% fee
-        //             { gasLimit: 30000000 }
-        //         );
-
-        //         console.log("path:", path);
-        //     }
-        // ).timeout(0);
-
         it("Scn.#1: migration of all collaterals | three collateral (incl. Native Token) and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
             const {
                 user,
@@ -2454,7 +2251,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
 
-        it("Scn.#13: migration of all collaterals | one collateral without borrow tokens | only conversion ", async function () {
+        it("Scn.#13: migration of all collaterals | one collateral without borrow tokens | only conversion", async function () {
             const {
                 user,
                 treasuryAddresses,
@@ -2467,7 +2264,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aaveV3Adapter,
                 migratorV2,
                 aaveV3Pool,
-                cUSDSv3Contract
+                cUSDSv3Contract,
+                uniswapContractAddresses,
+                uniswapV3PathFinder
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
@@ -2521,6 +2320,18 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             log("userBalancesBefore:", userBalancesBefore);
 
+            const swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.DAI,
+                    tokenOut: tokenAddresses.USDS,
+                    amountIn: userBalancesBefore.collateralsAave.DAI,
+                    amountOut: Zero,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+            const amountOutMinimum = BigNumber.from(swapData.estimatedAmount).mul(99).div(100);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -2528,11 +2339,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         aToken: aaveContractAddresses.aToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
-                                ethers.utils.hexZeroPad(tokenAddresses.USDS, 20)
-                            ]),
-                            amountOutMinimum: 0
+                            path: swapData.path,
+                            amountOutMinimum: amountOutMinimum
                         }
                     }
                 ]
@@ -2575,5 +2383,913 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // collaterals from Aave should be migrated to Comet as USDS
             expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
         }).timeout(0);
+
+        it("Scn.#14: migration of all collaterals | one collateral without borrow tokens | only conversion", async function () {
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                aTokenContracts,
+                debtTokenContracts,
+                compoundContractAddresses,
+                aaveV3Adapter,
+                migratorV2,
+                aaveV3Pool,
+                cUSDSv3Contract,
+                uniswapContractAddresses,
+                uniswapV3PathFinder
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                USDS: parseUnits("300", tokenDecimals.USDS)
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // setup the collateral and borrow positions in AaveV3
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
+
+            // total supply amount equivalent to 300 USD
+            const supplyAmounts = {
+                USDS: fundingData.USDS // 300 USD
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                await tokenContracts[token].approve(aaveV3Pool.address, amount);
+                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+            }
+
+            // total borrow amount equivalent to 50 USD
+            const borrowAmounts = {
+                DAI: parseUnits("50", tokenDecimals.DAI)
+            };
+
+            for (const [token, amount] of Object.entries(borrowAmounts)) {
+                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+            }
+
+            // Approve migration
+            for (const [symbol] of Object.entries(supplyAmounts)) {
+                await aTokenContracts[symbol].approve(migratorV2.address, MaxUint256);
+            }
+
+            // set allowance for migrator to spend cUSDCv3
+            await cUSDSv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDSv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralAave: {
+                    USDS: await aTokenContracts.USDS.balanceOf(user.address)
+                },
+                borrowAave: {
+                    DAI: await debtTokenContracts.DAI.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address)
+                }
+            };
+
+            log("userBalancesBefore:", userBalancesBefore);
+
+            const collateralSwapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.USDS,
+                    tokenOut: tokenAddresses.DAI,
+                    amountIn: userBalancesBefore.collateralAave.USDS,
+                    amountOut: Zero,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            const position = {
+                borrows: [
+                    {
+                        debtToken: aaveContractAddresses.variableDebtToken.DAI,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: "0x",
+                            amountInMaximum: 0
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        aToken: aaveContractAddresses.aToken.USDS,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: "0x",
+                            amountOutMinimum: 0
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = parseUnits("50", tokenDecimals.DAI).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDSv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(aaveV3Adapter.address, user.address, cUSDSv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralAave: {
+                    USDS: await aTokenContracts.USDS.balanceOf(user.address)
+                },
+                borrowAave: {
+                    DAI: await debtTokenContracts.DAI.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address)
+                }
+            };
+
+            log("userBalancesAfter:", userBalancesAfter);
+
+            // borrow should be closed
+            expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
+            // collateral should be migrated
+            expect(userBalancesAfter.collateralAave.USDS).to.be.equal(Zero);
+            // collaterals from Aave should be migrated to Comet as USDS
+            expect(userBalancesAfter.collateralsComet.USDS).to.be.not.equal(userBalancesBefore.collateralsComet.USDS);
+        }).timeout(0);
+
+        // -- UPD
+
+        it("Scn.#15: uniswapV3PathFinder and migratorV2 contracts | ", async function () {
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                aTokenContracts,
+                debtTokenContracts,
+                compoundContractAddresses,
+                aaveV3Adapter,
+                migratorV2,
+                aaveV3Pool,
+                uniswapContractAddresses,
+                cUSDCv3Contract,
+                uniswapV3PathFinder
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                WBTC: parseUnits("0.01", tokenDecimals.WBTC)
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // setup the collateral and borrow positions in AaveV3
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
+
+            const supplyAmounts = {
+                WBTC: fundingData.WBTC
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                await tokenContracts[token].approve(aaveV3Pool.address, amount);
+                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+            }
+
+            const borrowAmounts = {
+                USDT: parseUnits("300", tokenDecimals.USDT)
+            };
+
+            for (const [token, amount] of Object.entries(borrowAmounts)) {
+                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+            }
+
+            // Approve migration
+            for (const [symbol] of Object.entries(supplyAmounts)) {
+                if (symbol === "ETH") {
+                    aTokenContracts["WETH"].approve(migratorV2.address, MaxUint256);
+                } else {
+                    await aTokenContracts[symbol].approve(migratorV2.address, MaxUint256);
+                }
+            }
+
+            // set allowance for migrator to spend cUSDCv3
+
+            await cUSDCv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralsAave: {
+                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                },
+                borrowAave: {
+                    USDT: await debtTokenContracts.USDT.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
+
+            log("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.USDC,
+                    tokenOut: tokenAddresses.USDT,
+                    amountIn: Zero,
+                    amountOut: userBalancesBefore.borrowAave.USDT,
+                    excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            // console.log("amountOut:", formatUnits(userBalancesBefore.borrowAave.USDT, tokenDecimals.USDT));
+            // console.log("amountIn:", formatUnits(swapData.estimatedAmount, tokenDecimals.USDC));
+            // console.log("swapData:", swapData);
+
+            const position = {
+                borrows: [
+                    {
+                        debtToken: aaveContractAddresses.variableDebtToken.USDT,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        aToken: aaveContractAddresses.aToken.WBTC,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: "0x",
+                            amountOutMinimum: 0
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralsAave: {
+                    WBTC: await aTokenContracts.WBTC.balanceOf(user.address)
+                },
+                borrowAave: {
+                    USDT: await debtTokenContracts.USDT.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    WBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WBTC)
+                }
+            };
+
+            log("userBalancesAfter:", userBalancesAfter);
+
+            // all borrows should be closed
+            expect(userBalancesAfter.borrowAave.USDT).to.be.equal(Zero);
+            //all collaterals should be migrated
+            expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as USDC
+            expect(userBalancesAfter.collateralsComet.USDC).to.be.equal(userBalancesBefore.collateralsComet.USDC);
+            expect(userBalancesAfter.collateralsComet.WBTC).to.be.not.equal(userBalancesBefore.collateralsComet.WBTC);
+        }).timeout(0);
+
+        it("Scn.#16: uniswapV3PathFinder and migratorV2 contracts | ", async function () {
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                aTokenContracts,
+                debtTokenContracts,
+                compoundContractAddresses,
+                aaveV3Adapter,
+                migratorV2,
+                aaveV3Pool,
+                uniswapContractAddresses,
+                cUSDSv3Contract,
+                uniswapV3PathFinder
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                WETH: parseUnits("0.2", tokenDecimals.WETH) // ~ 200 USD
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // setup the collateral and borrow positions in AaveV3
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
+
+            const supplyAmounts = {
+                WETH: fundingData.WETH // 0.02 ETH
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                await tokenContracts[token].approve(aaveV3Pool.address, amount);
+                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+            }
+
+            const borrowAmounts = {
+                WETH: parseUnits("0.1", tokenDecimals.WETH)
+            };
+
+            for (const [token, amount] of Object.entries(borrowAmounts)) {
+                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+            }
+
+            // Approve migration
+            for (const [symbol] of Object.entries(supplyAmounts)) {
+                if (symbol === "ETH") {
+                    aTokenContracts["WETH"].approve(migratorV2.address, MaxUint256);
+                } else {
+                    await aTokenContracts[symbol].approve(migratorV2.address, MaxUint256);
+                }
+            }
+
+            // set allowance for migrator to spend cUSDCv3
+
+            await cUSDSv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDSv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralsAave: {
+                    WETH: await aTokenContracts.WETH.balanceOf(user.address)
+                },
+                borrowAave: {
+                    WETH: await debtTokenContracts.WETH.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    WETH: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.DAI,
+                    tokenOut: tokenAddresses.WETH,
+                    amountIn: Zero,
+                    amountOut: userBalancesBefore.borrowAave.WETH,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            const position = {
+                borrows: [
+                    {
+                        debtToken: aaveContractAddresses.variableDebtToken.WETH,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        aToken: aaveContractAddresses.aToken.WETH,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: "0x",
+                            amountOutMinimum: 0
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDSv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(aaveV3Adapter.address, user.address, cUSDSv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralsAave: {
+                    WETH: await aTokenContracts.WETH.balanceOf(user.address)
+                },
+                borrowAave: {
+                    WETH: await debtTokenContracts.WETH.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    WETH: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesAfter:", userBalancesAfter);
+
+            // all borrows should be closed
+            expect(userBalancesAfter.borrowAave.WETH).to.be.equal(Zero);
+            //all collaterals should be migrated
+            expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as USDC
+            expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
+            expect(userBalancesAfter.collateralsComet.WETH).to.be.above(userBalancesBefore.collateralsComet.WETH);
+            // should be borrowed USDS
+            expect(userBalancesBefore.borrowComet.USDS).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowComet.USDS).to.be.above(userBalancesBefore.borrowComet.USDS);
+        }).timeout(0);
+
+        it("Scn.#17: uniswapV3PathFinder and migratorV2 contracts | ", async function () {
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                aaveContractAddresses,
+                aTokenContracts,
+                debtTokenContracts,
+                compoundContractAddresses,
+                aaveV3Adapter,
+                migratorV2,
+                aaveV3Pool,
+                uniswapContractAddresses,
+                cUSDSv3Contract,
+                uniswapV3PathFinder
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                WETH: parseUnits("0.2", tokenDecimals.WETH) // ~ 200 USD
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // setup the collateral and borrow positions in AaveV3
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
+
+            const supplyAmounts = {
+                WETH: fundingData.WETH // 0.02 ETH
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                await tokenContracts[token].approve(aaveV3Pool.address, amount);
+                await aaveV3Pool.supply(tokenAddresses[token], amount, user.address, referralCode);
+            }
+
+            const borrowAmounts = {
+                WETH: parseUnits("0.1", tokenDecimals.WETH)
+            };
+
+            for (const [token, amount] of Object.entries(borrowAmounts)) {
+                await aaveV3Pool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+            }
+
+            // Approve migration
+            for (const [symbol] of Object.entries(supplyAmounts)) {
+                if (symbol === "ETH") {
+                    aTokenContracts["WETH"].approve(migratorV2.address, MaxUint256);
+                } else {
+                    await aTokenContracts[symbol].approve(migratorV2.address, MaxUint256);
+                }
+            }
+
+            // set allowance for migrator to spend cUSDCv3
+
+            await cUSDSv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDSv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralsAave: {
+                    WETH: await aTokenContracts.WETH.balanceOf(user.address)
+                },
+                borrowAave: {
+                    WETH: await debtTokenContracts.WETH.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    WETH: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.DAI,
+                    tokenOut: tokenAddresses.WETH,
+                    amountIn: Zero,
+                    amountOut: userBalancesBefore.borrowAave.WETH,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            const collateralSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.WETH,
+                    tokenOut: tokenAddresses.DAI,
+                    connectors: [tokenAddresses.USDT, tokenAddresses.USDC, tokenAddresses.WETH],
+                    amountIn: userBalancesBefore.collateralsAave.WETH,
+                    amountOut: Zero,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            const position = {
+                borrows: [
+                    {
+                        debtToken: aaveContractAddresses.variableDebtToken.WETH,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        aToken: aaveContractAddresses.aToken.WETH,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: collateralSwapData.path,
+                            amountOutMinimum: 0
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        aaveV3Adapter.address,
+                        compoundContractAddresses.markets.cUSDSv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(aaveV3Adapter.address, user.address, cUSDSv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralsAave: {
+                    WETH: await aTokenContracts.WETH.balanceOf(user.address)
+                },
+                borrowAave: {
+                    WETH: await debtTokenContracts.WETH.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    WETH: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesAfter:", userBalancesAfter);
+
+            // all borrows should be closed
+            expect(userBalancesAfter.borrowAave.WETH).to.be.equal(Zero);
+            //all collaterals should be migrated
+            expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as USDC
+            expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+            // should be borrowed USDS
+            expect(userBalancesBefore.borrowComet.USDS).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowComet.USDS).to.be.equal(userBalancesBefore.borrowComet.USDS);
+        }).timeout(0);
+
+/// --- DEV 
+
+        it("Scn.#00: uniswapV3PathFinder | USDS to DAI", async function () {
+            const { tokenAddresses, tokenDecimals, migratorV2, user, uniswapContractAddresses, uniswapV3PathFinder } =
+                await loadFixture(setupEnv);
+
+            const tokenIn = tokenAddresses.USDS;
+            const tokenOut = tokenAddresses.DAI;
+            const amountIn = parseUnits("150", tokenDecimals.DAI);
+
+            const maxGasEstimate = BigNumber.from(500000);
+
+            const singlePathExpectIn = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenIn,
+                    tokenOut: tokenOut,
+                    amountIn: Zero,
+                    amountOut: amountIn,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("^^singlePathExpectIn:", singlePathExpectIn);
+            console.log("^^bestAmountOut:", formatUnits(singlePathExpectIn.estimatedAmount, tokenDecimals.DAI));
+        }).timeout(0);
+
+        it("Scn.#01: uniswapV3PathFinder | get path for WBTC to LINK | connector: WETH, USDC, USDT", async function () {
+            const { tokenAddresses, tokenDecimals, migratorV2, user, uniswapContractAddresses, uniswapV3PathFinder } =
+                await loadFixture(setupEnv);
+
+            const amountIn = parseUnits("0.15", tokenDecimals.WBTC); // 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
+            const amountOut = parseUnits("12548.45", tokenDecimals.USDT);
+
+            const maxGasEstimate = BigNumber.from(500000);
+
+            const singlePathExpectIn = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.WBTC,
+                    tokenOut: tokenAddresses.USDT,
+                    amountIn: amountIn,
+                    amountOut: Zero,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("^^singlePathExpectIn:", singlePathExpectIn);
+            console.log("^^bestAmountOut:", formatUnits(singlePathExpectIn.estimatedAmount, tokenDecimals.USDT)); // 0.15087684
+
+            const singlePathExpectOut = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+                {
+                    tokenIn: tokenAddresses.WBTC,
+                    tokenOut: tokenAddresses.USDT,
+                    amountIn: Zero,
+                    amountOut: amountOut,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("^^singlePathExpectOut:", singlePathExpectOut);
+            console.log("^^bestAmountIn:", formatUnits(singlePathExpectOut.estimatedAmount, tokenDecimals.WBTC)); // 14287.941962
+
+            const multiPathExpectIn = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.WBTC,
+                    tokenOut: tokenAddresses.USDT,
+                    connectors: [tokenAddresses.WETH],
+                    amountIn: amountIn,
+                    amountOut: Zero,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("**multiPathExpectIn:", multiPathExpectIn);
+            console.log("**bestAmountOut:", formatUnits(multiPathExpectIn.estimatedAmount, tokenDecimals.USDT)); // 14287.941962
+
+            const multiPathExpectOut = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.WBTC,
+                    // tokenOut: tokenAddresses.WETH,
+                    tokenOut: tokenAddresses.USDT,
+                    connectors: [tokenAddresses.WETH],
+                    amountIn: Zero,
+                    amountOut: amountOut,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("^^multiPathExpectOut:", multiPathExpectOut);
+            console.log("^^bestAmountIn:", formatUnits(multiPathExpectOut.estimatedAmount, tokenDecimals.WBTC)); // 0.15087684
+
+            console.log("\n---------------------\n");
+
+            const quoterV2 = QuoterV2__factory.connect(uniswapContractAddresses.quoterV2, user);
+            const factory = UniswapV3Factory__factory.connect(uniswapContractAddresses.factory, user);
+
+            // console.log("Poll_1:", await factory.getPool(tokenAddresses.WETH, tokenAddresses.USDC, 3000));
+
+            const tokenIn = tokenAddresses.WBTC;
+            const tokenOut = tokenAddresses.USDT;
+
+            // const amountIn_ = parseUnits("0.5", tokenDecimals.WBTC);
+            // const amountOut_ = parseUnits("2", tokenDecimals.WETH);
+
+            console.log("Poll_2:", await factory.getPool(tokenIn, tokenOut, 500));
+
+            const pathIn = ethers.utils.concat([
+                ethers.utils.hexZeroPad(tokenIn, 20),
+                // FEE_500,
+                // ethers.utils.hexZeroPad(tokenAddresses.USDT, 20),
+                FEE_500,
+                ethers.utils.hexZeroPad(tokenOut, 20)
+            ]);
+
+            const pathOut = ethers.utils.concat([
+                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                FEE_500,
+                ethers.utils.hexZeroPad(tokenOut, 20)
+                // ethers.utils.hexZeroPad(tokenIn, 20)
+            ]);
+
+            // 0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8514910771af9ca656af840dff83e8264ecf986ca
+            // 0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4514910771af9ca656af840dff83e8264ecf986ca
+            // console.log("Path:", ethers.utils.hexlify(path));
+            // console.log("---Path:", path);
+
+            // const quote = await quoter.callStatic.quoteExactInput(path, amountIn); // ~ 955 USD
+            // const quoteV2 = await quoterV2.callStatic.quoteExactInput("0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb8514910771af9ca656af840dff83e8264ecf986ca", amountIn); // ~ 955 USD
+
+            const quoteIn = await quoterV2.callStatic.quoteExactInput(pathIn, amountIn);
+            // // const quoteIn = await quoterV2.callStatic.quoteExactInput(
+            // //     "0x2260fac5e5542a773aa44fbcfedf7c193bc2c5990001f4dac17f958d2ee523a2206206994597c13d831ec7000064c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            // //     amountIn
+            // // );
+            console.log("pathIn - ", ethers.utils.hexlify(pathIn));
+            console.log("quoteIn:amountIn - ", formatUnits(quoteIn.amountOut, tokenDecimals.USDT));
+
+            // const quoteOut = await quoterV2.callStatic.quoteExactOutput(pathOut, amountOut);
+            const quoteOut = await quoterV2.callStatic.quoteExactOutput(
+                "0xdac17f958d2ee523a2206206994597c13d831ec7002710c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000bb82260fac5e5542a773aa44fbcfedf7c193bc2c599",
+                amountOut
+            );
+            console.log("pathOut - ", ethers.utils.hexlify(pathOut));
+            console.log("QuoteOut:amountOut - ", formatUnits(quoteOut.amountIn, tokenDecimals.WBTC));
+        }).timeout(0);
+
+        // it.skip(
+        //     "Scn.#0: uniswapV3PathFinder | get path for WBTC to LINK | connector: WETH, USDC, USDT",
+        //     async function () {
+        //         const {
+        //             user,
+        //             treasuryAddresses,
+        //             tokenAddresses,
+        //             tokenContracts,
+        //             tokenDecimals,
+        //             aaveContractAddresses,
+        //             aTokenContracts,
+        //             debtTokenContracts,
+        //             uniswapContractAddresses,
+        //             aaveV3Adapter,
+        //             migratorV2,
+        //             aaveV3Pool,
+        //             wrappedTokenGateway, // 3652940205146178521, 52268054414917721654
+        //             cUSDCv3Contract,
+        //             pathFinder
+        //         } = await loadFixture(setupEnv);
+
+        //         // const testPath = ethers.utils.concat([
+        //         //     ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+        //         //     FEE_500,
+        //         //     ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+        //         //     FEE_100,
+        //         //     ethers.utils.hexZeroPad(tokenAddresses.LINK, 20)
+        //         // ]);
+
+        //         const amountIn = parseUnits("0.01", tokenDecimals.WBTC);
+        //         const maxGasEstimate = 208100000000000;
+
+        //         const path = await pathFinder.callStatic.getBestSwapPath(
+        //             // const path = await pathFinder.getBestSwapPath(
+        //             tokenAddresses.WBTC,
+        //             tokenAddresses.LINK,
+        //             [tokenAddresses.WETH],
+        //             // [tokenAddresses.WETH], // 52268054414917721654 // 3652940205146178521
+        //             amountIn,
+        //             // ["0x618004783d422DfB792D07D742549D5A24648dF2"], // Uniswap V3 pools: WBTC / LINK 0.3% fee
+        //             [
+        //                 "0x618004783d422dfb792d07d742549d5a24648df2"
+        //                 // "0xe6ff8b9a37b0fab776134636d9981aa778c4e718",
+        //                 // "0x4585fe77225b41b697c938b018e2ac67ac5a20c0",
+        //                 // "0xcbcdf9626bc03e24f779434178a73a0b4bad62ed",
+        //                 // "0x6ab3bba2f41e7eaa262fa5a1a9b3932fa161526f"
+        //             ], // Uniswap V3 pools: WBTC / LINK 0.3% fee
+        //             { gasLimit: 30000000 }
+        //         );
+
+        //         console.log("path:", path);
+        //     }
+        // ).timeout(0);
     });
 });

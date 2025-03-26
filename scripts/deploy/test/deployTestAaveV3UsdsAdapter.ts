@@ -33,25 +33,25 @@ async function deploy() {
     console.log("* Arguments: ", args);
     console.log("\n --- ------- ---- --- ");
 
-    // const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    // const contract = await Contract.connect(deployer).deploy(args);
-    // const deployTransaction = (await contract.deployed()).deployTransaction.wait();
+    const Contract = await ethers.getContractFactory(CONTRACT_NAME);
+    const contract = await Contract.connect(deployer).deploy(args);
+    const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
-    // console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
-    // const saveAddress = getAddressSaver(PATH_TO_FILE, network.name, true);
-    // saveAddress(
-    //     CONTRACT_NAME,
-    //     {
-    //         address: contract.address,
-    //         deployedBlock: (await deployTransaction).blockNumber,
-    //         chainId: ethers.provider.network.chainId
-    //     },
-    //     false
-    // );
+    console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
+    const saveAddress = getAddressSaver(PATH_TO_FILE, network.name, true);
+    saveAddress(
+        CONTRACT_NAME,
+        {
+            address: contract.address,
+            deployedBlock: (await deployTransaction).blockNumber,
+            chainId: ethers.provider.network.chainId
+        },
+        false
+    );
 
-    // console.log("\nDeployment is completed.");
-    // await verify(contract.address, [args]);
-    await verify("0x2b36a96c9E7177A4536C1cB9A50Fbc9f8D9A77E2", [args]);
+    console.log("\nDeployment is completed.");
+    await verify(contract.address, [args]);
+    // await verify("", [args]);
     console.log("\nDone.");
 }
 

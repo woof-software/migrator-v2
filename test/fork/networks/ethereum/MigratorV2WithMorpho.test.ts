@@ -21,7 +21,8 @@ import {
     IComet__factory,
     ERC20,
     MigratorV2__factory,
-    Ownable__factory
+    Ownable__factory,
+    UniswapV3PathFinder
 } from "../../../../typechain-types";
 
 import { MorphoPool__factory } from "../../types/contracts";
@@ -109,9 +110,13 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 id: "0xa921ef34e2fc7a27ccc50ae7e4b154e16c9799d3387076c421423ef52ac4df99",
                 loanToken: "USDT"
             },
+            // wstETH: {
+            //     id: "0x82076a47f01513bb21a227c64f6c358c6748fe007155dac9f56d5524b2f1f512",
+            //     loanToken: "WBTC"
+            // },
             wstETH: {
-                id: "0x82076a47f01513bb21a227c64f6c358c6748fe007155dac9f56d5524b2f1f512",
-                loanToken: "WBTC"
+                id: "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc",
+                loanToken: "USDC"
             },
             USDe: {
                 id: "0x8e6aeb10c401de3279ac79b4b2ea15fc94b7d9cfc098d6c2a1ff7b2b26d9d02c",
@@ -124,7 +129,11 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             cbBTC: {
                 id: "0x935faae97f5784dc97fba3c6ec072186ad9dbbf16368431c38f6a8b7fc3ec9a3",
                 loanToken: "WETH"
-            }
+            } //,
+            // WETH: {
+            //     id: "0xf9acc677910cc17f650416a22e2a14d5da7ccb9626db18f1bf94efe64f92b372",
+            //     loanToken: "USDC"
+            // }
         };
 
         // convertor Dai to Usds address
@@ -135,7 +144,10 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             pools: {
                 USDC_USDT: "0x3416cF6C708Da44DB2624D63ea0AAef7113527C6",
                 DAI_USDS: "0xe9F1E2EF814f5686C30ce6fb7103d0F780836C67"
-            }
+            },
+            factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6",
+            quoterV2: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
         };
 
         const compoundContractAddresses = {
@@ -170,6 +182,16 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
         })) as MorphoAdapter;
         await morphoAdapter.deployed();
 
+        const UniswapV3PathFinder = await ethers.getContractFactory("UniswapV3PathFinder");
+        const uniswapV3PathFinder = (await UniswapV3PathFinder.connect(user).deploy(
+            uniswapContractAddresses.factory,
+            uniswapContractAddresses.quoterV2,
+            tokenAddresses.DAI,
+            tokenAddresses.USDS
+        )) as UniswapV3PathFinder;
+
+        await uniswapV3PathFinder.deployed();
+
         const adapters = [morphoAdapter.address];
         const comets = [compoundContractAddresses.markets.cUSDCv3, compoundContractAddresses.markets.cUSDSv3];
 
@@ -180,10 +202,15 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 baseToken: tokenAddresses.USDC, // USDC
                 isToken0: true
             },
+            // {
+            //     liquidityPool: uniswapContractAddresses.pools.DAI_USDS, // Uniswap V3 pool DAI / USDS
+            //     baseToken: tokenAddresses.USDS, // USDS
+            //     isToken0: false
+            // }
             {
                 liquidityPool: uniswapContractAddresses.pools.DAI_USDS, // Uniswap V3 pool DAI / USDS
-                baseToken: tokenAddresses.USDS, // USDS
-                isToken0: false
+                baseToken: tokenAddresses.DAI,
+                isToken0: true
             }
         ];
 
@@ -220,7 +247,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             morphoPool,
             cUSDCv3Contract,
             cUSDSv3Contract,
-            morphoMarketsData
+            morphoMarketsData,
+            uniswapV3PathFinder
         };
     }
 
@@ -243,7 +271,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             // simulation of the vault contract work
             const fundingData = {
-                USDe: parseUnits("1300", tokenDecimals.wstETH), // ~1300 USD
+                USDe: parseUnits("1300", tokenDecimals.USDe), // ~1300 USD
                 WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
                 LINK: parseUnits("30", tokenDecimals.LINK) // ~530 USD
             };
@@ -477,7 +505,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             // simulation of the vault contract work
             const fundingData = {
-                USDe: parseUnits("1300", tokenDecimals.wstETH), // ~1300 USD
+                USDe: parseUnits("1300", tokenDecimals.USDe), // ~1300 USD
                 WBTC: parseUnits("0.01", tokenDecimals.WBTC), // ~ 955 USD
                 LINK: parseUnits("30", tokenDecimals.LINK) // ~530 USD
             };
@@ -659,7 +687,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             // simulation of the vault contract work
             const fundingData = {
-                USDe: parseUnits("1300", tokenDecimals.wstETH), // ~1300 USD
+                USDe: parseUnits("1300", tokenDecimals.USDe), // ~1300 USD
                 WBTC: parseUnits("0.01", tokenDecimals.WBTC) // ~ 955 USD
             };
             // --- start
@@ -2130,7 +2158,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             // simulation of the vault contract work
             const fundingData = {
-                USDe: parseUnits("1300", tokenDecimals.wstETH) // ~1300 USD
+                USDe: parseUnits("1300", tokenDecimals.USDe) // ~1300 USD
             };
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
@@ -2273,6 +2301,393 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             expect(userBalancesAfter.borrowMorpho.DAI).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDS
             expect(userBalancesAfter.collateralComet.USDS).to.be.above(userBalancesBefore.collateralComet.USDS);
+        }).timeout(0);
+
+        //  --- UPDATE ---
+
+        it("Scn.#13: uniswapV3PathFinder and migratorV2 contracts | ", async function () {
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                morphoContractAddresses,
+                morphoMarketsData,
+                compoundContractAddresses,
+                morphoAdapter,
+                migratorV2,
+                morphoPool,
+                uniswapContractAddresses,
+                cUSDSv3Contract,
+                uniswapV3PathFinder
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                LINK: parseUnits("0.98", tokenDecimals.LINK) // 0.098 LINK
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // total supply amount
+            const supplyAmounts = {
+                LINK: fundingData.LINK
+            };
+            // total borrow amount
+            const borrowAmounts: Record<string, BigNumber> = {
+                USDC: parseUnits("10.538137", tokenDecimals.USDC) // 10.538137 USD
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                await tokenContracts[token].approve(morphoPool.address, amount);
+
+                const marketParams: {
+                    loanToken: string;
+                    collateralToken: string;
+                    oracle: string;
+                    irm: string;
+                    lltv: BigNumber;
+                } = await morphoPool.idToMarketParams(morphoMarketsData[token].id);
+
+                await morphoPool.supplyCollateral(marketParams, amount, user.address, "0x").then((tx) => tx.wait());
+
+                await morphoPool
+                    .borrow(
+                        marketParams,
+                        borrowAmounts[morphoMarketsData[token].loanToken],
+                        Zero,
+                        user.address,
+                        user.address
+                    )
+                    .then((tx) => tx.wait());
+            }
+
+            // set allowance for migrator to spend cUSDSv3
+            await cUSDSv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDSv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralMorpho: {
+                    LINK: (await morphoPool.position(morphoMarketsData.LINK.id, user.address)).collateral
+                },
+                borrowMorpho: {
+                    USDC: (await morphoPool.position(morphoMarketsData.LINK.id, user.address)).borrowShares
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    LINK: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.LINK)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.DAI,
+                    tokenOut: tokenAddresses.USDC,
+                    connectors: [tokenAddresses.wstETH, tokenAddresses.USDC, tokenAddresses.WETH],
+                    amountIn: Zero,
+                    amountOut: borrowAmounts.USDC,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("borrowSwapData:", borrowSwapData);
+
+            const collateralSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.LINK,
+                    tokenOut: tokenAddresses.DAI,
+                    connectors: [tokenAddresses.wstETH, tokenAddresses.USDC, tokenAddresses.WETH],
+                    amountIn: supplyAmounts.LINK,
+                    amountOut: Zero,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("collateralSwapData:", collateralSwapData);
+
+            const position = {
+                borrows: [
+                    {
+                        marketId: morphoMarketsData.LINK.id, // USDC loan token
+                        assetsAmount: MaxUint256,
+                        swapParams: {
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        marketId: morphoMarketsData.LINK.id,
+                        assetsAmount: MaxUint256,
+                        swapParams: {
+                            path: collateralSwapData.path,
+                            amountOutMinimum: 0
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            console.log("flashAmount:", flashAmount.toString());
+
+            // Approve migration
+            await morphoPool.connect(user).setAuthorization(migratorV2.address, true);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        morphoAdapter.address,
+                        compoundContractAddresses.markets.cUSDSv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(morphoAdapter.address, user.address, cUSDSv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralMorpho: {
+                    LINK: (await morphoPool.position(morphoMarketsData.LINK.id, user.address)).collateral
+                },
+                borrowMorpho: {
+                    USDC: (await morphoPool.position(morphoMarketsData.LINK.id, user.address)).borrowShares
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    LINK: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.LINK)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesAfter:", userBalancesAfter);
+
+            // all borrows should be closed
+            expect(userBalancesAfter.borrowMorpho.USDC).to.be.equal(Zero);
+            //all collaterals should be migrated
+            expect(userBalancesAfter.collateralMorpho.LINK).to.be.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as USDC
+            expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            expect(userBalancesAfter.collateralsComet.LINK).to.be.equal(userBalancesBefore.collateralsComet.LINK);
+            // should be borrowed USDS
+            expect(userBalancesBefore.borrowComet.USDS).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowComet.USDS).to.be.equal(userBalancesBefore.borrowComet.USDS);
+        }).timeout(0);
+
+        it("Scn.#14: uniswapV3PathFinder and migratorV2 contracts | ", async function () {
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                morphoContractAddresses,
+                morphoMarketsData,
+                compoundContractAddresses,
+                morphoAdapter,
+                migratorV2,
+                morphoPool,
+                uniswapContractAddresses,
+                cUSDSv3Contract,
+                uniswapV3PathFinder
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                wstETH: parseUnits("0.006", tokenDecimals.wstETH)
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // total supply amount
+            const supplyAmounts = {
+                wstETH: fundingData.wstETH
+            };
+            // total borrow amount
+            const borrowAmounts: Record<string, BigNumber> = {
+                USDC: parseUnits("10.538137", tokenDecimals.USDC) // 10.538137 USD
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                await tokenContracts[token].approve(morphoPool.address, amount);
+
+                const marketParams: {
+                    loanToken: string;
+                    collateralToken: string;
+                    oracle: string;
+                    irm: string;
+                    lltv: BigNumber;
+                } = await morphoPool.idToMarketParams(morphoMarketsData[token].id);
+
+                await morphoPool.supplyCollateral(marketParams, amount, user.address, "0x").then((tx) => tx.wait());
+
+                await morphoPool
+                    .borrow(
+                        marketParams,
+                        borrowAmounts[morphoMarketsData[token].loanToken],
+                        Zero,
+                        user.address,
+                        user.address
+                    )
+                    .then((tx) => tx.wait());
+            }
+
+            // set allowance for migrator to spend cUSDSv3
+            await cUSDSv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDSv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralMorpho: {
+                    wstETH: (await morphoPool.position(morphoMarketsData.wstETH.id, user.address)).collateral
+                },
+                borrowMorpho: {
+                    USDC: (await morphoPool.position(morphoMarketsData.wstETH.id, user.address)).borrowShares
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    wstETH: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.wstETH)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.DAI,
+                    tokenOut: tokenAddresses.USDC,
+                    connectors: [tokenAddresses.USDT, tokenAddresses.USDC, tokenAddresses.WETH],
+                    amountIn: Zero,
+                    amountOut: borrowAmounts.USDC,
+                    excludedPool: uniswapContractAddresses.pools.DAI_USDS,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("borrowSwapData:", borrowSwapData);
+
+            const position = {
+                borrows: [
+                    {
+                        marketId: morphoMarketsData.wstETH.id, // USDC loan token
+                        assetsAmount: MaxUint256,
+                        swapParams: {
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        marketId: morphoMarketsData.wstETH.id,
+                        assetsAmount: MaxUint256,
+                        swapParams: {
+                            path: "0x",
+                            amountOutMinimum: 0
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            console.log("flashAmount:", flashAmount.toString());
+
+            // Approve migration
+            await morphoPool.connect(user).setAuthorization(migratorV2.address, true);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        morphoAdapter.address,
+                        compoundContractAddresses.markets.cUSDSv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(morphoAdapter.address, user.address, cUSDSv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralMorpho: {
+                    wstETH: (await morphoPool.position(morphoMarketsData.wstETH.id, user.address)).collateral
+                },
+                borrowMorpho: {
+                    USDC: (await morphoPool.position(morphoMarketsData.wstETH.id, user.address)).borrowShares
+                },
+                collateralsComet: {
+                    USDS: await cUSDSv3Contract.balanceOf(user.address),
+                    wstETH: await cUSDSv3Contract.collateralBalanceOf(user.address, tokenAddresses.wstETH)
+                },
+                borrowComet: {
+                    USDS: await cUSDSv3Contract.borrowBalanceOf(user.address)
+                }
+            };
+
+            log("userBalancesAfter:", userBalancesAfter);
+
+            // all borrows should be closed
+            expect(userBalancesAfter.borrowMorpho.USDC).to.be.equal(Zero);
+            //all collaterals should be migrated
+            expect(userBalancesAfter.collateralMorpho.wstETH).to.be.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as wstETH
+            expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
+            expect(userBalancesAfter.collateralsComet.wstETH).to.be.above(userBalancesBefore.collateralsComet.wstETH);
+            // should be borrowed USDS
+            expect(userBalancesBefore.borrowComet.USDS).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowComet.USDS).to.be.above(userBalancesBefore.borrowComet.USDS);
         }).timeout(0);
     });
 });

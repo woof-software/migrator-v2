@@ -51,7 +51,7 @@ async function deploy() {
 
     console.log("\nDeployment is completed.");
     await verify(contract.address, [args]);
-    // await verify("0xF0D52Fbab6BD64fe7b7fFF6578f3295F236066Ef", [args]);
+    // await verify("", [args]);
     console.log("\nDone.");
 }
 

@@ -10,7 +10,10 @@ import {
     setBalance,
     parseUnits,
     loadFixture,
-    log
+    log,
+    BigNumber,
+    AddressZero,
+    formatUnits
 } from "../../../helpers"; // Adjust the path as needed
 
 import {
@@ -21,7 +24,9 @@ import {
     IAToken__factory,
     IAToken,
     IDebtToken__factory,
-    IDebtToken
+    IDebtToken,
+    UniswapV3PathFinder__factory,
+    UniswapV3PathFinder
 } from "../../../../typechain-types";
 
 import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/contracts";
@@ -38,7 +43,7 @@ import { AavePool__factory, WrappedTokenGatewayV3__factory } from "../../types/c
  *      ```
  *
  *  **Enabling Debug Logs**
- *    - To display additional debug logs (collateral balances and borrow positions before and after migration),  
+ *    - To display additional debug logs (collateral balances and borrow positions before and after migration),
  *      add the `--debug-log=true` flag:
  *      ```sh
  *      npm run test-f-aave --debug-log=true --fork-network=base
@@ -115,7 +120,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             router: "0x2626664c2603336E57B271c5C0b26F421741e481",
             pools: {
                 USDC_USDT: "0xD56da2B74bA826f19015E6B7Dd9Dae1903E85DA1" // 0.01% fee
-            }
+            },
+            factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+            quoterV2: "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a"
         };
 
         const compoundContractAddresses = {
@@ -215,7 +222,76 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
         };
     }
 
+    /** 
+     * Contract Call:
+  address:   0x30e7d25774507630733d1E277E7B664b1Dee757e
+  function:  getBestMultiSwapPath((address tokenIn, address tokenOut, address[] connectors, uint256 amountIn, uint256 amountOut, address excludedPool, uint256 maxGasEstimate))
+  args:                          ({"tokenIn":"0x940181a94A35A4569E4529A3CDfB74e38FD98631","tokenOut":"0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452","connectors":["0x4200000000000000000000000000000000000006","0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA"],"amountIn":{"type":"BigNumber","hex":"0x06f05b59d3b20000"},"amountOut":"0","excludedPool":"0x0000000000000000000000000000000000000000","maxGasEstimate":"500000"})
+  sender:    0x23eEF61AB548a8852117561689886f583FC0E2B7
+     */
+
     context("Migrate positions from AaveV3 to Compound III", function () {
+        it.only("Scn.#00: uniswapV3PathFinder | DAI to USDS", async function () {
+            const { tokenAddresses, tokenDecimals, migratorV2, user, uniswapContractAddresses } = await loadFixture(
+                setupEnv
+            );
+
+            const connectors = [
+                "0x4200000000000000000000000000000000000006", // WETH 18 decimals
+                "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA" // USDbC 6 decimals
+            ];
+
+            const tokenIn = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"; // AERO 18 decimals
+            const tokenOut = "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452"; // wstETH 18 decimals
+
+            const amountIn = 500000000000000000n; // 545608095465427375
+            // const amountIn = 0n;
+            const amountOut = 0n;
+            // const amountOut = 115638267972963n;
+
+            const UniswapV3PathFinder_ = await ethers.getContractFactory("UniswapV3PathFinder");
+            const pathFinder_ = (await UniswapV3PathFinder_.connect(user).deploy(
+                uniswapContractAddresses.factory,
+                uniswapContractAddresses.quoterV2,
+                AddressZero,
+                AddressZero
+            )) as UniswapV3PathFinder;
+
+            // const pathFinder_ = UniswapV3PathFinder__factory.connect(
+            //     "0x30e7d25774507630733d1E277E7B664b1Dee757e",
+            //     user
+            // );
+
+            const maxGasEstimate = 500000n;
+
+            // const singlePathExpectIn = await pathFinder_.callStatic.getBestSingleSwapPath(
+            //     {
+            //         tokenIn: tokenIn,
+            //         tokenOut: tokenOut,
+            //         amountIn: Zero,
+            //         amountOut: amountIn,
+            //         excludedPool: AddressZero,
+            //         maxGasEstimate
+            //     },
+            //     { gasLimit: 30000000 }
+            // );
+            const multiPathExpectIn = await pathFinder_.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn,
+                    tokenOut,
+                    connectors,
+                    amountIn,
+                    amountOut,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                },
+                { gasLimit: 30000000 }
+            );
+
+            console.log("^^multiPathExpectIn:", multiPathExpectIn);
+            console.log("^^bestAmountOut:", formatUnits(multiPathExpectIn.estimatedAmount, 18));
+        }).timeout(0);
+
         it("Scn.#1: migration of all collaterals | three collateral (incl. Native Token) and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
             const {
                 user,

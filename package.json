@@ -12,11 +12,9 @@
         "compile-4g": "npx hardhat --max-memory 4096 compile",
         "coverage": "npx hardhat coverage --testfiles test/unit/*.ts",
         "generate-types": "typechain --target=ethers-v5 'test/fork/abi/*.json' --out-dir test/fork/types/contracts",
-        "test": "npx hardhat test test/unit/*test.ts --fulltrace",
-        "test-t": "npx hardhat test --trace",
-        "test-ft": "npx hardhat test --fulltrace",
+        "test": "npx hardhat test test/unit/*test.ts $npm_config_trace",
 
-        "test-f": "FORKING=true npx hardhat test test/fork/networks/$npm_config_fork_network/$npm_config_test_pattern",
+        "test-f": "FORKING=true npx hardhat test test/fork/networks/$npm_config_fork_network/$npm_config_test_pattern $npm_config_trace",
 
         "test-f-aave": "npm run test-f --test-pattern=\"*AaveV3.test.ts\"",
         "test-f-spark": "npm run test-f --test-pattern=\"*Spark.test.ts\"",

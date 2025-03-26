@@ -1,305 +1,388 @@
 # MigratorV2
 
-MigratorV2 is a flexible migration contract that enables the migration of user positions from various lending protocols (like Aave V3) to Compound III (Comet) using Uniswap V3 Flash Loans. The contract supports adding new protocols for migration, making it adaptable and future-proof.
-
-The migration process involves repaying user debts, migrating collaterals, and re-supplying them to the Compound III (Comet) protocol. The contract interacts with a set of protocol-specific adapters to achieve flexible migration logic.
-
-## 📋 Key Features
-
--   **Protocol Flexibility**: Supports migration from multiple lending protocols to Compound III (Comet). New protocols can be easily added by registering a protocol adapter.
--   **Flash Loan Support**: Uses Uniswap V3 flash loans to facilitate efficient debt repayments.
--   **Cross-Protocol Position Transfer**: Manages the full migration of user collateral and debt positions.
--   **Collateral Management**: Handles multiple types of collaterals, including options to drop unsupported collateral.
--   **Token Wrapping/Unwrapping**: Supports wrapping/unwrapping of native tokens (like ETH <-> WETH) as needed for seamless collateral migration.
--   **Swap Functionality**: Uses Uniswap V3 swaps for liquidity and token exchanges where required.
--   **Slippage Management**: Slippage protection for all token swaps.
--   **Frontend Integration**: The user must provide all required amounts, routes, and addresses from the frontend.
+**MigratorV2** is a flexible contract for migrating user positions from various lending protocols (Aave, Spark, Morpho) to Compound III (Comet), using Uniswap V3 flash loans. The contract is built with a modular architecture, utilizing adapters for each protocol, and supports extension without the need for redeployment.
 
 ---
 
-## 🛠️ Project Setup
+## **📄 Key Features**
 
-This project uses **Hardhat** as the development environment and **npm** as the package manager. To initialize the project, follow these steps:
+-   **Migration from Aave, Spark, and Morpho to Compound III**
 
-###  Clone the Repository
+Users can transfer their collateral and debt positions from three major protocols (Aave V3, Spark Protocol, Morpho Blue) to Compound III (Comet). This avoids manual asset withdrawal and debt repayment, reduces gas costs, and minimizes risks of temporarily exiting positions.
 
-```bash
-git clone https://github.com/your-username/migrator-v2.git
-cd migrator-v2
-```
+-   **6 Adapters: 2 per Protocol**
 
-###  Install Dependencies
+Each supported lending protocol has two types of adapters:
 
-```bash
-npm install
-```
+-   A base adapter — supports all networks where the protocol is available.
+-   A USDS-supporting adapter — designed for Ethereum, handling USDS-specific behavior.
+-   **Flexible Position Migration**
 
-###  Compile the Contracts
+Users can choose which specific collaterals and debts to migrate. For example, out of four collateral assets, they can choose to migrate only two, provided the health factor is preserved in the source protocol. This flexibility enables users to adapt migration to their individual strategies.
 
-```bash
-npx hardhat compile
-```
+-   **Debt-Free Migration**
 
-###  Run Tests
+If the user has no active debt but holds collateral in the protocol (e.g., only aTokens in Aave), they can migrate just the collateral. In this case, **no flash loan is needed**, making the transaction significantly cheaper. The contract simply withdraws the collateral and deposits it into Compound III on behalf of the user.
 
-```bash
-npx hardhat test
-```
+-   **Full Position Migration Support**
 
-### 5️⃣ Deploy the Contracts
+Currently, only full migration of each selected position is supported — if a user selects a specific debt or collateral, the entire amount is migrated. Partial migration (e.g., 50% of a debt) will be added in future updates.
 
-```bash
-npx hardhat run scripts/deploy.js --network your-network-name
-```
+-   **Customizable Target Collateral Format in Compound III**
 
----
+After migration, users can choose the format for depositing into Compound III:
 
-## 📚 Key Contracts
+-   The base token of the market (e.g., USDC or USDS)
+-   One of the supported collateral tokens
 
--   **MigratorV2.sol**: The main migrator contract that facilitates the migration process.
--   **BaseAdapter.sol**: An abstract contract that serves as a base for protocol-specific adapters.
--   **AaveV3Adapter.sol**: A protocol adapter for migrating user positions from Aave V3 to Compound III.
--   **SwapModule.sol**: A utility module for Uniswap V3 swaps to support collateral migration and token exchanges.
+This allows them to preserve or simplify their portfolio structure.
+
+-   **USDS Migration via DAI Proxy Mechanism**
+
+If a user interacts with Compound markets that use USDS as the base token, but USDS liquidity is low, the contract uses DAI as an intermediary token:
+
+-   Flash loans, swaps, and deposits are executed in DAI.
+-   The contract automatically converts DAI ⇄ USDS when needed.
+-   Switching to direct USDS usage is possible in the future without redeployment.
 
 ---
 
-## 📝 Contract Overview
-
-###  **MigratorV2**
-
-The `MigratorV2` contract serves as the main entry point for users to initiate a position migration. It uses **Uniswap V3 flash loans** to acquire liquidity for repaying user debts on the source protocol. After the debt is repaid, the user’s collateral is withdrawn and migrated to Compound III. New protocols can be added by registering new protocol adapters.
-
-###  **BaseAdapter**
-
-The `BaseAdapter` contract contains shared logic for protocol-specific adapters. It includes methods for **DAI <-> USDS conversions**, **token wrapping/unwrapping** (like ETH <-> WETH), and shared helper functions used by protocol adapters.
-
-###  **AaveV3Adapter**
-
-The `AaveV3Adapter` inherits from `BaseAdapter` and provides specific logic for migrating user positions from **Aave V3** to **Compound III**. It implements all the necessary logic to **repay Aave V3 debts**, **withdraw user collateral**, and **resupply it to Compound III**.
-
----
-
-## 🔄 How Migration Works
+## **🚀 How Migration Works**
 
 1. **Debt Repayment**:
-
-    - The contract takes a **flash loan** from Uniswap V3.
-    - The borrowed tokens are used to repay the user’s debts on the source protocol (e.g., Aave V3).
-
+    - The contract receives a flash loan from Uniswap V3 (in the base token of the Compound market, or in DAI if the market uses USDS, based on migrator contract configuration).
+    - The funds are used to repay the user’s debt in the source protocol (Aave, Spark, or Morpho).
 2. **Collateral Migration**:
-
-    - After repaying the debt, the **collateral is withdrawn** from the source protocol.
-    - If the new protocol does not support a specific type of collateral, it can be **dropped or exchanged** via Uniswap V3.
-    - The wrapped native tokens (like WETH) can be **unwrapped** if the new protocol requires it.
-
-3. **Collateral Supply**:
-    - The collateral is **supplied to the target protocol** (like Compound III) on behalf of the user.
-    - Optionally, if the user prefers to supply the network’s **native token** instead of an ERC20 version (like ETH instead of WETH), the collateral will be **unwrapped**.
-
----
-
-## 🔧 How to Initialize MigratorV2
-
-When deploying `MigratorV2`, you can optionally register initial protocol adapters, Comet contracts, and flash loan configurations. However, these values can also be set later.
-
-### Deployment Parameters
-
-| **Parameter** | **Type**      | **Description**                                  |
-| ------------- | ------------- | ------------------------------------------------ |
-| `multisig`    | `address`     | The address of the owner (typically a multisig)  |
-| `adapters`    | `address[]`   | (Optional) List of protocol adapters to register |
-| `comets`      | `address[]`   | (Optional) List of Comet contracts to support    |
-| `flashData`   | `FlashData[]` | (Optional) Flash loan configuration data         |
-
-> **Note**: These parameters are optional. If not provided during deployment, the adapters, comets, and flash loan data can be set later using the owner functions.
+    - The contract withdraws the user’s collateral from the source protocol.
+    - If needed, it performs a swap via Uniswap V3 or a conversion (e.g., DAI ⇄ USDS).
+    - Users can choose which collaterals to migrate or migrate all — fully or partially.
+3. **Deposit into Compound III**:
+    - The collateral is deposited on behalf of the user into the selected Compound III market.
+    - The user can choose:
+    - **The market’s base token** — e.g., USDC or USDS
+    - **Supported collateral tokens** — e.g., WBTC, WETH, etc.
 
 ---
 
-## 🔍 migrate() Method
+## **💡 Flash Loan Repayment Logic**
 
-The `migrate()` method is the main function that users will call to start a migration.
+-   If **all collaterals are migrated into the market as base tokens**, a portion of those funds will be **automatically used to repay the flash loan** plus the fee. After migration, the user’s balance will reflect the total collateral minus flash loan repayment costs.
+-   If **collaterals are migrated as supported tokens (not base asset)**:
+-   The contract attempts to cover the flash loan by **withdrawing the required base token amount** from the user’s Compound III deposit.
+-   If only collateral tokens are deposited (no base asset), the contract **withdraws funds from the user’s Compound balance** (via withdrawFrom) to repay the flash loan.
+-   In case of a **mixed migration** (some collaterals as base token, others as collateral tokens):
+-   If **the deposited base token is insufficient** to fully repay the flash loan, a **debt is created for the difference**, which is either deducted from the base token or withdrawn from the collateral in Compound.
 
-### **Arguments**
+> ⚠️ Important: The frontend must calculate the flash loan amount so that the user maintains a safe Health Factor in the new Compound market after migration. It must account for all variables: remaining base token balance, deposited collaterals, and potential flash loan repayment costs. An incorrectly calculated flash loan could leave the user at risk of immediate liquidation after migration.
 
-| **Argument**    | **Type**  | **Description**                                      |
-| --------------- | --------- | ---------------------------------------------------- |
-| `adapter`       | `address` | Address of the protocol adapter to use for migration |
-| `comet`         | `address` | Address of the Comet contract to migrate to          |
-| `migrationData` | `bytes`   | Encoded data that describes the user’s position      |
-| `flashAmount`   | `uint256` | Amount of the flash loan required for the migration  |
+-   The collateral is deposited into the selected Compound III market.
+-   If the target market uses USDS as the base token, the DAI proxy mechanism is used.
 
 ---
 
-## 🔄 Migration Process Overview
+## **📖 Building Transactions for migrate()**
 
-## 🛠️ How to Formulate Transactions for `migrate` Method
+### **🔁 Example 1: Swapping debt and collateral via Uniswap V3**
 
-The `migrate` method is the main entry point for initiating the migration of user positions. Below are detailed examples of transaction formation for different scenarios:
-
-### **Example 1: Swap with pathOfSwapFlashloan and pathSwapCollateral**
-
-Use the Uniswap V3 SDK to define paths for swaps. Refer to the following guides:
-
--   [Uniswap V3 Routing](https://docs.uniswap.org/sdk/v3/guides/swaps/routing)
--   [Uniswap V3 Multihop Swaps](https://docs.uniswap.org/contracts/v3/guides/swaps/multihop-swaps)
-
-```javascript
-const FEE_3000 = 3000; // 0.3%
-// Convert fee to 3-byte hex
-const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(FEE_3000), 3); // 0x0BB8
+```
+const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(3000), 3); // 0x0BB8
 
 const position = {
-    borrows: [
-        {
-            aDebtToken: varDebtDaiTokenAddress,
-            amount: MaxUint256,
-            swapParams: {
-                path: ethers.utils.concat([
-                    ethers.utils.hexZeroPad(daiTokenAddress, 20),
-                    fee3000,
-                    ethers.utils.hexZeroPad(usdcTokenAddress, 20)
-                ]),
-                amountInMaximum: parseUnits("80", 6)
-            }
-        }
-    ],
-    collaterals: [
-        {
-            aToken: aWbtcTokenAddress,
-            amount: MaxUint256,
-            swapParams: {
-                path: ethers.utils.concat([
-                    ethers.utils.hexZeroPad(wbtcTokenAddress, 20),
-                    fee3000,
-                    ethers.utils.hexZeroPad(usdcTokenAddress, 20)
-                ]),
-                amountOutMinimum: parseUnits("100", 6)
-            }
-        }
-    ]
+  borrows: [
+    {
+      debtToken: varDebtDaiTokenAddress,
+      amount: MaxUint256,
+      swapParams: {
+        path: ethers.utils.concat([
+          ethers.utils.hexZeroPad(daiTokenAddress, 20),
+          fee3000,
+          ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+        ]),
+        amountInMaximum: parseUnits("80", 6)
+      }
+    }
+  ],
+  collaterals: [
+    {
+      aToken: aWbtcTokenAddress,
+      amount: MaxUint256,
+      swapParams: {
+        path: ethers.utils.concat([
+          ethers.utils.hexZeroPad(wbtcTokenAddress, 20),
+          fee3000,
+          ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+        ]),
+        amountOutMinimum: parseUnits("100", 6)
+      }
+    }
+  ]
 };
 
-const positionAbi = [
-    "tuple(address aDebtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+const abi = [
+  "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
+  "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
 ];
 
-// Encode the data
-const migrationData = ethers.utils.defaultAbiCoder.encode(
-    ["tuple(" + positionAbi.join(",") + ")"],
-    [[position.borrows, position.collaterals]]
-);
+const migrationData = ethers.utils.defaultAbiCoder.encode([
+  "tuple(" + abi.join(",") + ")"
+], [[position.borrows, position.collaterals]]);
 ```
 
-### **Example 2: No Swap Required**
+### **🔁 Example 2: Migrating only collateral (no debt)**
 
-For cases where no swap is required, provide empty paths:
+```
+const fee3000 = ethers.utils.hexZeroPad(ethers.utils.hexlify(3000), 3);
 
-```javascript
 const position = {
-    borrows: [
-        {
-            aDebtToken: varDebtDaiTokenAddress,
-            amount: MaxUint256,
-            swapParams: {
-                path: "0x",
-                amountInMaximum: 0
-            }
-        }
-    ],
-    collaterals: [
-        {
-            aToken: aWbtcTokenAddress,
-            amount: MaxUint256,
-            swapParams: {
-                path: "0x",
-                amountOutMinimum: 0
-            }
-        }
-    ]
+  borrows: [],
+  collaterals: [
+    {
+      aToken: aWbtcTokenAddress,
+      amount: MaxUint256,
+      swapParams: {
+        path: ethers.utils.concat([
+          ethers.utils.hexZeroPad(wbtcTokenAddress, 20),
+          fee3000,
+          ethers.utils.hexZeroPad(usdcTokenAddress, 20)
+        ]),
+        amountOutMinimum: parseUnits("100", 6)
+      }
+    }
+  ]
 };
 
-// const positionAbi = [...]
-// const migrationData = ethers.utils.defaultAbiCoder.encode(...)
+const abi = [...]; // same as above
+const migrationData = ethers.utils.defaultAbiCoder.encode([
+  "tuple(" + abi.join(",") + ")"
+], [[position.borrows, position.collaterals]]);
 ```
 
-### **Example 3: Token Wrapping (e.g., ETH <-> WETH)**
+### **⚡ Example 3: No swaps (direct transfer)**
 
-Specify wrapping/unwrapping logic as required by the frontend:
-
-```javascript
+```
 const position = {
-    borrows: [
-        {
-            aDebtToken: varDebtDaiTokenAddress,
-            amount: MaxUint256,
-            swapParams: {
-                path: ethers.utils.concat([
-                    ethers.utils.hexZeroPad(usdsTokenAddress, 20),
-                    ethers.utils.hexZeroPad(daiTokenAddress, 20)
-                ]),
-                amountOutMinimum: parseUnits("120", 18)
-            }
-        }
-    ],
-    collaterals: [
-        {
-            aToken: aWbtcTokenAddress,
-            amount: MaxUint256,
-            swapParams: {
-                path: "0x",
-                amountOutMinimum: 0
-            }
-        }
-    ]
+  borrows: [
+    {
+      debtToken: varDebtDaiTokenAddress,
+      amount: MaxUint256,
+      swapParams: {
+        path: "0x",
+        amountInMaximum: 0
+      }
+    }
+  ],
+  collaterals: [
+    {
+      aToken: aWbtcTokenAddress,
+      amount: MaxUint256,
+      swapParams: {
+        path: "0x",
+        amountOutMinimum: 0
+      }
+    }
+  ]
+};
+```
+
+### **🔄 Example 4: DAI <-> USDS Conversion**
+
+```
+const position = {
+  borrows: [
+    {
+      debtToken: varDebtDaiTokenAddress,
+      amount: MaxUint256,
+      swapParams: {
+        path: ethers.utils.concat([
+          ethers.utils.hexZeroPad(usdsTokenAddress, 20),
+          ethers.utils.hexZeroPad(daiTokenAddress, 20)
+        ]),
+        amountOutMinimum: parseUnits("120", 18)
+      }
+    }
+  ],
+  collaterals: [...]
+};
+```
+
+---
+
+## **🚧 Migration Prerequisites**
+
+1. **Grant permissions to the migrator contract**:
+
+-   **For Aave and Spark protocols:**
+
+```
+await aToken.approve(migrator.address, ethers.utils.parseUnits("0.1", 8));
+await comet.allow(migrator.address, true);
+```
+
+-   **For Morpho protocol:**
+
+```
+await morphoPool.connect(user).setAuthorization(migrator.address, true);
+```
+
+1. **Frontend Responsibilities**:
+
+-   Provide accurate swap routes and all migrationData parameters.
+-   Ensure approval of all involved tokens (debts and collaterals).
+-   Account for the DAI ⇄ USDS proxy conversion logic.
+
+---
+
+## **🧭 Optimal Swap Routing — UniswapV3PathFinder**
+
+The UniswapV3PathFinder contract assists the frontend in building the most efficient swap paths through Uniswap V3. It selects the best route for both single-hop and multi-hop swaps, optimizing either the received token amount or minimizing input costs for a given amountOut.
+
+## **🔍 Key Features**
+
+-   Supports both exactInput and exactOutput modes.
+-   Automatically finds the best pool (from fee tiers: 0.01%, 0.05%, 0.3%, 1%).
+-   Supports excluding specific pools (excludedPool) — to avoid pool reuse within the same transaction.
+-   Special handling for DAI ⇄ USDS — returns direct path without querying.
+-   maxGasEstimate parameter allows setting a gas limit during QuoterV2 queries.
+
+---
+
+## **✳️ Use Cases**
+
+1.  **🔁 Single-Hop Swap — getBestSingleSwapPath**
+
+```
+function getBestSingleSwapPath(SingleSwapParams memory params)
+    external
+    returns (bytes memory path, uint256 estimatedAmount, uint256 gasEstimate);
+```
+
+**Input Parameters:**
+
+-   tokenIn, tokenOut — token addresses
+-   amountIn or amountOut — only one must be provided
+-   excludedPool — optional pool to exclude
+-   maxGasEstimate — required
+
+---
+
+1.  **🔀 Multi-Hop Swap — getBestMultiSwapPath**
+
+```
+function getBestMultiSwapPath(MultiSwapParams memory params)
+    external
+    returns (bytes memory path, uint256 estimatedAmount, uint256 gasEstimate);
+```
+
+**Input Parameters:**
+
+-   tokenIn, tokenOut — token addresses
+-   connectors — required list of possible intermediate tokens
+-   amountIn or amountOut — only one must be set
+-   excludedPool, maxGasEstimate
+
+> 📌 Error if both amountIn and amountOut are set or both are zero.
+
+---
+
+## **⚙️ Frontend Example**
+
+```
+const params = {
+  tokenIn: DAI,
+  tokenOut: USDC,
+  amountIn: parseUnits("100", 18),
+  amountOut: 0,
+  excludedPool: ZERO_ADDRESS,
+  maxGasEstimate: 1_000_000
 };
 
-// const positionAbi = [...]
-// const migrationData = ethers.utils.defaultAbiCoder.encode(...)
+const { path, estimatedAmount, gasEstimate } = await pathFinder.getBestSingleSwapPath(params);
 ```
 
 ---
 
-## 🛠️ Pre-Migration Requirements
+## **📎 Built-in USDS ⇄ DAI Support**
 
-1. **Approve Collateral Handling**:
-   Ensure that the MigratorV2 contract has the necessary permissions to handle collateral tokens. Use the following commands:
-
-    ```javascript
-    await aWbtcToken.approve(migrator.address, ethers.utils.parseUnits("0.1", 8));
-    await cUSDCv3Contract.allow(migrator.address, true);
-    ```
-
-2. **Frontend Responsibilities**:
-    - Provide all required amounts, swap paths, and addresses.
-    - Handle approvals for collateral and debt tokens.
+When tokenIn and tokenOut are DAI and USDS (or vice versa), the route is returned directly via abi.encodePacked(DAI, USDS) without querying the Quoter.
 
 ---
 
-## 📚 Available Functions
+## **🛡️ Error Handling**
 
-### **Owner-Only Functions**
+Returns errors for:
 
--   `setAdapter(address adapter)`: Adds a new protocol adapter.
--   `removeAdapter(address adapter)`: Removes a protocol adapter.
--   `setFlashData(address comet, FlashData memory flashData)`: Sets the flash loan configuration for a Comet contract.
--   `removeFlashData(address comet)`: Removes flash loan configuration for a Comet contract.
+-   InvalidZeroAddress
+-   OnlyOneAmountMustBeSet
+-   MustBeSetAmountInOrAmountOut
+-   MustBeSetMaxGasEstimate
+-   SwapPoolsNotFound
+-   MustBeAtLeastOneConnector (for multi-hop only)
 
-### **Public Functions**
-
--   `migrate()`: Main entry point for position migration.
--   `uniswapV3FlashCallback()`: Callback function for Uniswap V3 flash loans.
-
----
-
-## 🛠️ Frontend Responsibilities
-
--   **Provide Full Routes and Amounts**: The frontend must calculate and provide all the necessary routes, swap paths, amounts, and addresses for migration.
--   **Token Approvals**: The user must approve the MigratorV2 contract for all collateral and debt tokens. This approval is essential for the contract to access the user’s tokens.
--   **Drop Unsupported Collateral**: If the target protocol does not support a collateral type, the frontend can instruct the contract to drop that collateral.
+> 🔧 **The contract is used only for off-chain swap path computation**
 
 ---
 
-## 📝 License
+## **📃 Administrative Functions (Owner Only)**
 
-This project is licensed under the **MIT License**.
+-   setAdapter(address) — add a new adapter
+-   removeAdapter(address) — remove an adapter
+-   setFlashData(address comet, FlashData flashData) — set flash loan configuration
+-   removeFlashData(address comet) — remove flash loan data for a market
+
+---
+
+## **🚀 Future Plans**
+
+-   Enable partial position migration (by amount).
+-   Transition from DAI proxy to direct USDS use (as liquidity allows).
+
+---
+
+## 🌐 Deployed Contracts
+
+### Arbitrum
+
+- `TestMigratorV2`: [`0x602198BDf1547086dC89d7b426822d95519D7844`](https://arbiscan.io/address/0x602198BDf1547086dC89d7b426822d95519D7844#code)  
+- `TestAaveV3Adapter`: [`0xf0E4D3A96ebe87aE39560d2B19e53dCC00aB5d28`](https://arbiscan.io/address/0xf0E4D3A96ebe87aE39560d2B19e53dCC00aB5d28#code)  
+- `TestUniswapV3PathFinder`: [`0xbe7873DF7407b570bDe3406e50f76AB1A63b748b`](https://arbiscan.io/address/0xbe7873DF7407b570bDe3406e50f76AB1A63b748b#code)  
+
+---
+
+### Base
+
+- `TestMigratorV2`: [`0xd5D3C5492802D40E086B8cF12eB31D6BcC59ddA4`](https://basescan.org/address/0xd5D3C5492802D40E086B8cF12eB31D6BcC59ddA4#code)  
+- `TestAaveV3Adapter`: [`0xD655Fb965aC05552e83A4c73A1F832024DC5F515`](https://basescan.org/address/0xD655Fb965aC05552e83A4c73A1F832024DC5F515#code)  
+- `TestMorphoAdapter`: [`0x037642eA98cCaed61Ba2eEC17cc799FE6691d39E`](https://basescan.org/address/0x037642eA98cCaed61Ba2eEC17cc799FE6691d39E#code)  
+- `TestUniswapV3PathFinder`: [`0x6e30F794aD268Cf92131303a4557B097CF93c621`](https://basescan.org/address/0x6e30F794aD268Cf92131303a4557B097CF93c621#code)  
+
+---
+
+### Ethereum
+
+- `TestMigratorV2`: [`0x0ef2c369A5c5EbFe06C6a54276206b076319c99f`](https://etherscan.io/address/0x0ef2c369A5c5EbFe06C6a54276206b076319c99f#code)  
+- `TestAaveV3UsdsAdapter`: [`0x147505db1811F3eE7aB5bb5d9Fed79f257F018E7`](https://etherscan.io/address/0x147505db1811F3eE7aB5bb5d9Fed79f257F018E7#code)  
+- `TestSparkUsdsAdapter`: [`0x8c16F393923E586447f5D583396cc7aC3E8d4AB9`](https://etherscan.io/address/0x8c16F393923E586447f5D583396cc7aC3E8d4AB9#code)  
+- `TestMorphoUsdsAdapter`: [`0x1EFe17A612D9D64075bC77A403D246b858b800ab`](https://etherscan.io/address/0x1EFe17A612D9D64075bC77A403D246b858b800ab#code)  
+- `TestUniswapV3PathFinder`: [`0x876dD243c5ad4d9D9FAb98CAF71E16CB1833c9Ae`](https://etherscan.io/address/0x876dD243c5ad4d9D9FAb98CAF71E16CB1833c9Ae#code)  
+
+---
+
+### Polygon
+
+- `TestMigratorV2`: [`0x70395912F72861FD42cA33Ce671bC936E5f29dCF`](https://polygonscan.com/address/0x70395912F72861FD42cA33Ce671bC936E5f29dCF#code)  
+- `TestAaveV3Adapter`: [`0x0F4ee1b1B6451b7cE2b49378094695d3d6dE2e1d`](https://polygonscan.com/address/0x0F4ee1b1B6451b7cE2b49378094695d3d6dE2e1d#code)  
+- `TestUniswapV3PathFinder`: [`0xdb83bc921d49Bf73326D7BBA36a8CF8211d62534`](https://polygonscan.com/address/0xdb83bc921d49Bf73326D7BBA36a8CF8211d62534#code)  
+
+---
+
+### Optimism
+
+- `TestMigratorV2`: [`0x96d5e6C5821a384237673A4444ACf6721E4d9E1d`](https://optimistic.etherscan.io/address/0x96d5e6C5821a384237673A4444ACf6721E4d9E1d#code)  
+- `TestAaveV3Adapter`: [`0x74c15Aa6f11029e900493e53898dD558aF4B842f`](https://optimistic.etherscan.io/address/0x74c15Aa6f11029e900493e53898dD558aF4B842f#code)  
+- `TestUniswapV3PathFinder`: [`0xf145bc354aeca1E5EafB7f7F7d431cC7A308A990`](https://optimistic.etherscan.io/address/0xf145bc354aeca1E5EafB7f7F7d431cC7A308A990#code)  
+
+---
+
+## **🔖 License**
+
+The project is licensed under **BUSL-1.1 License**.

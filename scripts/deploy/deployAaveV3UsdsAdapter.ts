@@ -7,41 +7,25 @@ import path from "path";
 import { getAddressSaver, verify } from "./utils/helpers";
 const { ethers, network } = hre;
 
-const CONTRACT_NAME = "SparkAdapter";
+const CONTRACT_NAME = "AaveV3UsdsAdapter";
 const FILE_NAME = "deploymentAddresses";
 const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 
-// Use the network name to get the config.
-const args = {
-    uniswapRouter: "0x",
-    daiUsdsConverter: "0x",
-    dai: "0x",
-    usdc: "0x",
-    wrappedNativeToken: "0x",
-    sparkPool: "0x",
-    sparkDataProvider: "0x"
-};
-
 async function deploy() {
     const [deployer] = await ethers.getSigners();
-    const config = nodeConfig.util.toObject(nodeConfig.get("networks"))[network.name];
+
+    const config = process.env.npm_config_args_network;
+    const args = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[config || "hardhat"][CONTRACT_NAME];
 
     console.log("\n --- Deployed data --- \n");
     console.log("* ", deployer.address, "- Deployer address");
     console.log("* ", hre.network.name, "- Network name");
     console.log("* ", CONTRACT_NAME, "- Contract name");
+    console.log("* Arguments: ", args);
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    const contract = await Contract.connect(deployer).deploy({
-        uniswapRouter: config.uniswapRouter,
-        daiUsdsConverter: config.daiUsdsConverter,
-        dai: config.dai,
-        usds: config.usdc,
-        wrappedNativeToken: config.wrappedNativeToken,
-        sparkLendingPool: config.sparkPool,
-        sparkDataProvider: config.sparkDataProvider
-    });
+    const contract = await Contract.connect(deployer).deploy(args);
     const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
     console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
@@ -57,15 +41,8 @@ async function deploy() {
     );
 
     console.log("\nDeployment is completed.");
-    await verify(contract.address, [
-        config.uniswapRouter,
-        config.daiUsdsConverter,
-        config.dai,
-        config.usdc,
-        config.wrappedNativeToken,
-        config.sparkPool,
-        config.sparkDataProvider
-    ]);
+    await verify(contract.address, [args]);
+    // await verify("", [args]);
     console.log("\nDone.");
 }
 

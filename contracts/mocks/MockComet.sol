@@ -7,7 +7,8 @@ contract MockComet {
     address public assetToken;
     address public collateralToken;
 
-    mapping(address => uint256) public userSupply;
+    mapping(address => mapping(address => uint256)) public userSupply;
+
     constructor(address _assetToken, address _collateralToken) {
         require(_assetToken != address(0), "Invalid asset token address");
         require(_collateralToken != address(0), "Invalid collateral token address");
@@ -19,17 +20,25 @@ contract MockComet {
 
     function supplyTo(address dst, address asset, uint256 amount) public {
         IERC20(asset).transferFrom(msg.sender, address(this), amount);
-        userSupply[dst] += amount;
+        userSupply[dst][asset] += amount;
     }
 
     function withdrawFrom(address src, address to, address asset, uint256 amount) public {
-        require(userSupply[src] >= amount, "Insufficient supply balance");
-        userSupply[src] -= amount;
+        require(userSupply[src][asset] >= amount, "Insufficient supply balance");
+        userSupply[src][asset] -= amount;
         IERC20(asset).transfer(to, amount);
     }
 
     function collateralBalanceOf(address user, address collateral) public view returns (uint256) {
-        return IERC20(collateral).balanceOf(user);
+        return userSupply[user][collateral];
+    }
+
+    function baseToken() external view returns (address) {
+        return assetToken;
+    }
+
+    function balanceOf(address user) public view returns (uint256) {
+        return userSupply[user][assetToken];
     }
 
     /**

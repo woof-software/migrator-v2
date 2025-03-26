@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
+
 pragma solidity 0.8.28;
 
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -11,9 +12,41 @@ import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
 import {IWETH9} from "../interfaces/IWETH9.sol";
 import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
-/// @title MorphoAdapter
-/// @notice Adapter contract to migrate positions from Morpho to Compound III (Comet)
-
+/**
+ * @title MorphoAdapter
+ * @notice Adapter contract for migrating user positions from Morpho Protocol to Compound III (Comet).
+ *
+ * @dev This adapter implements `IProtocolAdapter` and is designed to be called via `delegatecall` from the main migrator contract (e.g. `MigratorV2`).
+ * It facilitates the seamless migration of borrow and collateral positions from Morpho to Compound III markets. The adapter extends `SwapModule`
+ * for Uniswap V3 swap support and uses `DelegateReentrancyGuard` to protect against reentrancy when executed via delegatecall.
+ *
+ * Core responsibilities include:
+ * - Repayment of Morpho borrow positions using either:
+ *    - Tokens held by the contract,
+ *    - Tokens swapped via Uniswap V3 (`_swapFlashloanToBorrowToken`), or
+ *    - Assets withdrawn from Compound III in case of flash loan repayment.
+ * - Withdrawal of user collateral from Morpho using `withdrawCollateral` followed by:
+ *    - Direct supply to Compound III,
+ *    - Token conversion via Uniswap V3 if necessary, or
+ *    - Native token wrapping (e.g. ETH → WETH) if required by the Comet market.
+ * - Handling optional flash loan repayments from Uniswap V3 pools, optionally drawing funds from the user's Comet balance.
+ * - Full or partial migrations, governed by the `IS_FULL_MIGRATION` flag. If set to `true`, the adapter enforces full debt repayment and reverts if residual borrow shares remain.
+ *
+ * Key features:
+ * - Flexible repayment via Uniswap swaps with slippage control.
+ * - Dynamic debt resolution using real-time share-to-asset conversions.
+ * - Native token support (via WETH wrapping).
+ * - Fully modular design via inheritance of common migration logic from `SwapModule`.
+ *
+ * Requirements:
+ * - The user must grant this contract necessary allowances and have an active position in the specified Morpho markets.
+ * - The migration configuration must include valid Uniswap paths when swaps are required.
+ * - The adapter must be called within a delegate context (e.g., from a proxy/migrator).
+ *
+ * Limitations:
+ * - Only variable borrow positions are supported (via `borrowShares`).
+ * - Does not include any DAI ⇄ USDS conversion logic (unlike `*UsdsAdapter` variants).
+ */
 contract MorphoAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
     /// -------- Libraries -------- ///
 
@@ -112,16 +145,50 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
     /// --------Functions-------- ///
 
     /**
-     * @notice Executes the migration of a user's Morpho position to Compound III
-     * @dev This function decodes the migration data and processes borrows and collateral
-     * @param user Address of the user whose position is being migrated
-     * @param comet Address of the Compound III (Comet) contract
-     * @param migrationData Encoded data containing the user's Morpho position details
+     * @notice Executes the migration of a user's full or partial position from Morpho to Compound III (Comet).
+     *
+     * @dev This function orchestrates the full migration flow from Morpho to Compound III by:
+     *  1. Decoding the ABI-encoded `MorphoPosition` structure that contains:
+     *     - An array of `MorphoBorrow` items, each representing a borrow position to repay.
+     *     - An array of `MorphoCollateral` items, each representing a collateral position to migrate.
+     *  2. For each borrow:
+     *     - Loads the market parameters using `idToMarketParams()` from Morpho.
+     *     - Accrues interest to ensure up-to-date borrow data.
+     *     - Optionally performs a token swap to obtain repayment assets.
+     *     - Repays the borrow using `repay()`.
+     *  3. For each collateral:
+     *     - Retrieves the user's collateral position from Morpho.
+     *     - Withdraws the collateral using `withdrawCollateral()`.
+     *     - Optionally performs a swap to convert the token into a target-compatible asset.
+     *     - Supplies the final asset to the target Compound III market using `supplyTo()`.
+     *  4. If a flash loan was used (i.e. `flashloanData` is non-empty), repays it via `_repayFlashloan`.
+     *
+     * This function supports full and partial migrations. If `IS_FULL_MIGRATION` is true, it performs
+     * debt clearance verification after repayment and reverts if any borrow remains.
+     *
+     * @param user The address of the user whose position is being migrated from Morpho.
+     * @param comet The address of the target Compound III (Comet) market receiving the migrated assets.
+     * @param migrationData ABI-encoded `MorphoPosition` struct specifying borrow and collateral migration details.
+     * @param flashloanData Optional ABI-encoded data used to repay a Uniswap V3 flash loan, if one was utilized.
+     *
+     * Requirements:
+     * - The user must have an active position in Morpho.
+     * - Approvals must be in place for this contract to pull required tokens from the user.
+     * - If swaps are involved, the swap paths and parameters must be valid.
+     *
+     * Effects:
+     * - Fully repays user’s debts and migrates collateral from Morpho to Compound III.
+     * - Optionally swaps tokens to align with target market requirements.
+     * - Optionally repays flash loan used for atomic migration.
+     *
+     * Reverts:
+     * - If full migration is enabled and debt remains uncleared after repayment.
      */
     function executeMigration(
         address user,
         address comet,
-        bytes calldata migrationData
+        bytes calldata migrationData,
+        bytes calldata flashloanData
     ) external override nonReentrant {
         // Decode the migration data into an SparkPosition struct
         MorphoPosition memory position = abi.decode(migrationData, (MorphoPosition));
@@ -135,13 +202,92 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
         for (uint256 i = 0; i < position.collateral.length; i++) {
             _migrateCollateral(user, comet, position.collateral[i]);
         }
+
+        // Repay flashloan
+        if (flashloanData.length > 0) {
+            _repayFlashloan(user, comet, flashloanData);
+        }
     }
 
     /**
-     * @notice Repays a borrow position for the user on Morpho
-     * @dev May perform a swap to obtain the necessary tokens for repayment
-     * @param user Address of the user whose borrow is being repaid
-     * @param borrow The borrow position details
+     * @notice Repays a flash loan obtained during the Morpho-to-Compound III migration process.
+     *
+     * @dev This function ensures that the total borrowed flash loan amount, including the associated fee,
+     * is fully repaid to the Uniswap V3 liquidity pool that issued it. The repayment strategy includes:
+     *
+     * - First checking whether the current contract holds enough balance in `flashBaseToken`.
+     * - If not, withdrawing the shortfall from the user's Compound III account via `withdrawFrom()`.
+     * - Finally, transferring the full `flashAmountWithFee` back to the liquidity pool using `safeTransfer()`.
+     *
+     * This logic assumes that the token used for the flash loan (`flashBaseToken`) is compatible with both
+     * the Uniswap V3 pool and the Comet market, and does not require any token conversion logic.
+     *
+     * @param user The address of the user whose Compound III (Comet) balance may be used to cover the shortfall.
+     * @param comet The address of the Compound III market from which funds may be withdrawn on behalf of the user.
+     * @param flashloanData ABI-encoded tuple containing:
+     *        - `flashLiquidityPool` (address): Uniswap V3 pool that provided the flash loan.
+     *        - `flashBaseToken` (address): The ERC-20 token borrowed.
+     *        - `flashAmountWithFee` (uint256): Total repayment amount, including the loan fee.
+     *
+     * Requirements:
+     * - The contract must be able to fully repay the flash loan in `flashBaseToken`.
+     * - If the contract's internal balance is insufficient, the user must have sufficient balance
+     *   in Comet for the withdrawal to succeed.
+     *
+     * Effects:
+     * - May trigger `withdrawFrom()` to pull tokens from the user's Comet account.
+     * - Completes repayment by transferring funds to the flash loan provider.
+     *
+     * Reverts:
+     * - If the flash loan cannot be repaid in full due to insufficient funds or withdrawal failure.
+     */
+    function _repayFlashloan(address user, address comet, bytes calldata flashloanData) internal {
+        (address flashLiquidityPool, address flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
+            flashloanData,
+            (address, address, uint256)
+        );
+
+        address executor = address(this);
+        uint256 balance = IERC20(flashBaseToken).balanceOf(executor);
+
+        if (balance < flashAmountWithFee) {
+            // Withdraw the required amount from the user's Comet account
+            IComet(comet).withdrawFrom(user, executor, flashBaseToken, (flashAmountWithFee - balance));
+        }
+
+        // Repay the flash loan
+        IERC20(flashBaseToken).safeTransfer(flashLiquidityPool, flashAmountWithFee);
+    }
+
+    /**
+     * @notice Repays a borrow position for the user in the Morpho protocol.
+     *
+     * @dev This function performs the following operations:
+     *  1. Retrieves the `MarketParams` for the specified `marketId` and accrues interest via `accrueInterest()`.
+     *  2. Loads the user's position to access the current borrow shares.
+     *  3. If `assetsAmount` equals `type(uint256).max`, calculates the full debt by converting borrow shares to assets.
+     *  4. If a token swap is required (`swapParams.path.length > 0`), executes a Uniswap V3 exact output swap
+     *     to acquire the debt repayment token.
+     *  5. Approves the Morpho Lending Pool to pull `loanToken` for repayment.
+     *  6. Executes the repayment using the exact borrow shares from the user's position.
+     *  7. If `IS_FULL_MIGRATION` is true, validates that the user’s debt position is fully cleared after repayment.
+     *
+     * @param user The address of the user whose borrow position is being repaid.
+     * @param borrow Struct representing the borrow position to be repaid:
+     *        - `marketId`: Identifier of the Morpho market.
+     *        - `assetsAmount`: Amount of debt to repay (or `type(uint256).max` to repay all).
+     *        - `swapParams`: Optional parameters for acquiring the repayment token via Uniswap V3.
+     *
+     * Requirements:
+     * - The user must have an existing borrow position in the specified market.
+     * - If swapping is required, the path must be valid and the contract must hold or acquire enough input tokens.
+     * - On full migration, residual borrow shares must be zero after repayment.
+     *
+     * Effects:
+     * - Accrues interest for the target market.
+     * - Performs an on-chain swap if repayment tokens need to be acquired.
+     * - Transfers and repays the debt on behalf of the user.
+     * - Reverts with `DebtNotCleared` if debt remains and `IS_FULL_MIGRATION` is enabled.
      */
     function _repayBorrow(address user, MorphoBorrow memory borrow) internal {
         MarketParams memory marketParams = LENDING_POOL.idToMarketParams(borrow.marketId);
@@ -182,11 +328,34 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
     }
 
     /**
-     * @notice Migrates a user's collateral position from Morpho to Compound III
-     * @dev May perform a swap to obtain the migration tokens
-     * @param user Address of the user whose collateral is being migrated
-     * @param comet Address of the Compound III (Comet) contract
-     * @param collateral The collateral position details
+     * @notice Migrates a user's collateral position from Morpho to Compound III (Comet).
+     *
+     * @dev This function performs the following steps:
+     *  1. Retrieves the `MarketParams` for the specified `marketId` and loads the user's current position.
+     *  2. Determines the amount of collateral to migrate. If `assetsAmount == type(uint256).max`, it uses the full collateral balance.
+     *  3. Calls `withdrawCollateral()` on the Morpho Lending Pool to transfer the collateral to this contract.
+     *  4. Depending on `swapParams`, it performs one of the following:
+     *     - Executes a Uniswap V3 swap to convert the collateral to the desired token (`tokenOut`),
+     *       then supplies the swapped token to the `comet` contract.
+     *     - If the collateral asset is a native token (e.g., ETH), wraps it into WETH and supplies it.
+     *     - Otherwise, supplies the original collateral token directly to the Comet market.
+     *
+     * @param user The address of the user whose collateral is being migrated.
+     * @param comet The address of the Compound III (Comet) market that will receive the collateral.
+     * @param collateral Struct representing the collateral to migrate:
+     *        - `marketId`: The ID of the Morpho market where the collateral is held.
+     *        - `assetsAmount`: The amount of collateral to migrate (use `type(uint256).max` to migrate all).
+     *        - `swapParams`: Optional Uniswap V3 swap parameters used to convert the token before supplying.
+     *
+     * Requirements:
+     * - The user must have sufficient collateral in the specified market.
+     * - If a swap is required, `swapParams.path` must be valid and executable.
+     * - If the asset is native (e.g., ETH), the contract must support wrapping into an ERC-20 (e.g., WETH).
+     *
+     * Effects:
+     * - Withdraws collateral from Morpho.
+     * - Performs optional token swap or wrapping.
+     * - Supplies the resulting token into the target Comet market on behalf of the user.
      */
     function _migrateCollateral(address user, address comet, MorphoCollateral memory collateral) internal {
         MarketParams memory marketParams = LENDING_POOL.idToMarketParams(collateral.marketId);
@@ -234,10 +403,17 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
     }
 
     /**
-     * @notice Checks if the debt for a specific token has been successfully closed.
-     * @param id Address of the market.
-     * @param user Address of the user.
-     * @return isCleared Boolean indicating whether the debt is cleared.
+     * @notice Checks whether the user's debt position in a specific Morpho market is fully repaid.
+     *
+     * @dev Fetches the current `Position` data for the user in the given Morpho market ID.
+     *      The function evaluates whether the user's `borrowShares` equals zero, indicating
+     *      that the user has no remaining outstanding borrow debt in that market.
+     *
+     * @param id The market ID in Morpho for which the debt status is being checked.
+     * @param user The address of the user whose debt is being verified.
+     *
+     * @return isCleared Boolean flag indicating whether the debt has been fully cleared (`true`)
+     *         or if borrow shares are still present (`false`).
      */
     function _isDebtCleared(Id id, address user) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset

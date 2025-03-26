@@ -13,6 +13,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      It assumes a 1:1 swap rate between tokens for simplicity.
  */
 contract MockSwapRouter is ISwapRouter {
+    bool public negativeCaseRedeem;
+
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     /**

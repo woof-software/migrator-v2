@@ -25,47 +25,53 @@ const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
 async function deploy() {
     const [deployer] = await ethers.getSigners();
 
-    const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
-        process.env.npm_config_args_network || "hardhat"
-    ];
-    const args = config[CONTRACT_NAME];
-    console.log("Block number:", await ethers.provider.getBlockNumber());
+    // const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
+    //     process.env.npm_config_args_network || "hardhat"
+    // ];
+    // const args = config[CONTRACT_NAME];
+    // console.log("Block number:", await ethers.provider.getBlockNumber());
 
-    console.log("\n --- Deployed data --- \n");
-    console.log("* ", deployer.address, "- Deployer address");
-    console.log("* ", hre.network.name, "- Network name");
-    console.log("* ", CONTRACT_NAME, "- Contract name");
-    console.log("* Arguments: ", args);
-    console.log("\n --- ------- ---- --- ");
+    // console.log("\n --- Deployed data --- \n");
+    // console.log("* ", deployer.address, "- Deployer address");
+    // console.log("* ", hre.network.name, "- Network name");
+    // console.log("* ", CONTRACT_NAME, "- Contract name");
+    // console.log("* Arguments: ", args);
+    // console.log("\n --- ------- ---- --- ");
 
-    const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    const contract = await Contract.connect(deployer).deploy(args);
-    const deployTransaction = (await contract.deployed()).deployTransaction.wait();
+    // const Contract = await ethers.getContractFactory(CONTRACT_NAME);
+    // const contract = await Contract.connect(deployer).deploy(args);
+    // const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
-    console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
-    const saveAddress = getAddressSaver(PATH_TO_FILE, network.name, true);
-    saveAddress(
-        CONTRACT_NAME,
-        {
-            address: contract.address,
-            deployedBlock: (await deployTransaction).blockNumber,
-            chainId: ethers.provider.network.chainId
-        },
-        false
-    );
+    // console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
+    // const saveAddress = getAddressSaver(PATH_TO_FILE, network.name, true);
+    // saveAddress(
+    //     CONTRACT_NAME,
+    //     {
+    //         address: contract.address,
+    //         deployedBlock: (await deployTransaction).blockNumber,
+    //         chainId: ethers.provider.network.chainId
+    //     },
+    //     false
+    // );
 
-    console.log("\nDeployment is completed.");
-    await verify(contract.address, [args]);
-    console.log("\nDone.");
+    // console.log("\nDeployment is completed.");
+    // await verify(contract.address, [args]);
+    // console.log("\nDone.");
 
-    // // For Ethereum mainnet, the address is "0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e".
+    // For Ethereum mainnet, the address is "0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e".
     // // Add the address to the Migration contract.
     // console.log("Adding the adapter to the Migration contract...");
-    // const migration = MigratorV2__factory.connect("0xd4c88B769043C4f43D3f79842C7D7Bb82411A34e", deployer);
-    // // await migration.setAdapter(contract.address);
-    // // await migration.setAdapter("0xC403f466a5e8A068fD51352DcCca311809F5Af68");
+    const migration = MigratorV2__factory.connect("0x0ef2c369A5c5EbFe06C6a54276206b076319c99f", deployer);
+    // await migration.setAdapter(contract.address);
+    // await migration.setAdapter("0x1EFe17A612D9D64075bC77A403D246b858b800ab");
     // console.log("owner: ", await migration.owner());
     // console.log("Adapter is added to the Migration contract.");
+
+    // Delete the address from the Migration contract.
+    console.log("Removing the adapter from the Migration contract...");
+    const contract = "0xd55b9e59bFf3b2dE058e95825066C661e7348b2e";
+    await migration.removeAdapter(contract);
+    console.log(`Adapter is removed from the Migration contract: ${contract}`);
 }
 
 deploy().catch((error) => {

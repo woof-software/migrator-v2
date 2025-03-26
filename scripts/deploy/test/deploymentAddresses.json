@@ -1,37 +1,7 @@
 {
-    "hardhat": {
-        "old": {},
-        "new": {
-            "TestAaveV3DaiAdapter": {
-                "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-                "deployedBlock": 1,
-                "chainId": 1
-            },
-            "TestMigratorV2": {
-                "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-                "deployedBlock": 1,
-                "chainId": 1
-            }
-        }
-    },
-    "arbitrum": {
-        "old": {},
-        "new": {
-            "TestAaveV3DaiAdapter": {
-                "address": "0x74c15Aa6f11029e900493e53898dD558aF4B842f",
-                "deployedBlock": 297848801,
-                "chainId": 42161
-            }
-        }
-    },
     "arbitrumOne": {
         "old": {},
         "new": {
-            "TestAaveV3DaiAdapter": {
-                "address": "0x96d5e6C5821a384237673A4444ACf6721E4d9E1d",
-                "deployedBlock": 297849194,
-                "chainId": 42161
-            },
             "TestMigratorV2": {
                 "address": "0x602198BDf1547086dC89d7b426822d95519D7844",
                 "deployedBlock": 312164356,
@@ -43,8 +13,8 @@
                 "chainId": 42161
             },
             "TestUniswapV3PathFinder": {
-                "address": "0xE0De5067454B2ce20cd74605C9D85b77bcE05DeD",
-                "deployedBlock": 312177658,
+                "address": "0xbe7873DF7407b570bDe3406e50f76AB1A63b748b",
+                "deployedBlock": 317232619,
                 "chainId": 42161
             }
         }
@@ -52,14 +22,14 @@
     "base": {
         "old": {},
         "new": {
-            "TestAaveV3Adapter": {
-                "address": "0xD655Fb965aC05552e83A4c73A1F832024DC5F515",
-                "deployedBlock": 27154448,
-                "chainId": 8453
-            },
             "TestMigratorV2": {
                 "address": "0xd5D3C5492802D40E086B8cF12eB31D6BcC59ddA4",
                 "deployedBlock": 27154508,
+                "chainId": 8453
+            },
+            "TestAaveV3Adapter": {
+                "address": "0xD655Fb965aC05552e83A4c73A1F832024DC5F515",
+                "deployedBlock": 27154448,
                 "chainId": 8453
             },
             "TestMorphoAdapter": {
@@ -68,8 +38,8 @@
                 "chainId": 8453
             },
             "TestUniswapV3PathFinder": {
-                "address": "0x30e7d25774507630733d1E277E7B664b1Dee757e",
-                "deployedBlock": 27153810,
+                "address": "0x6e30F794aD268Cf92131303a4557B097CF93c621",
+                "deployedBlock": 27787987,
                 "chainId": 8453
             }
         }
@@ -77,29 +47,29 @@
     "mainnet": {
         "old": {},
         "new": {
-            "TestAaveV3UsdsAdapter": {
-                "address": "0x2b36a96c9E7177A4536C1cB9A50Fbc9f8D9A77E2",
-                "deployedBlock": 21973039,
+            "TestMigratorV2": {
+                "address": "0x0ef2c369A5c5EbFe06C6a54276206b076319c99f",
+                "deployedBlock": 22065495,
                 "chainId": 1
             },
-            "TestMigratorV2": {
-                "address": "0xd5D3C5492802D40E086B8cF12eB31D6BcC59ddA4",
-                "deployedBlock": 21973670,
+            "TestAaveV3UsdsAdapter": {
+                "address": "0x147505db1811F3eE7aB5bb5d9Fed79f257F018E7",
+                "deployedBlock": 22065416,
                 "chainId": 1
             },
             "TestSparkUsdsAdapter": {
-                "address": "0x30e7d25774507630733d1E277E7B664b1Dee757e",
-                "deployedBlock": 21973084,
+                "address": "0x8c16F393923E586447f5D583396cc7aC3E8d4AB9",
+                "deployedBlock": 22095194,
                 "chainId": 1
             },
             "TestMorphoUsdsAdapter": {
-                "address": "0xD655Fb965aC05552e83A4c73A1F832024DC5F515",
-                "deployedBlock": 21973101,
+                "address": "0x1EFe17A612D9D64075bC77A403D246b858b800ab",
+                "deployedBlock": 22095226,
                 "chainId": 1
             },
             "TestUniswapV3PathFinder": {
-                "address": "0x8a267dBFdF10AC8D562D58490b9B13348Ed8d4dB",
-                "deployedBlock": 21973976,
+                "address": "0x876dD243c5ad4d9D9FAb98CAF71E16CB1833c9Ae",
+                "deployedBlock": 22079081,
                 "chainId": 1
             }
         }
@@ -107,19 +77,19 @@
     "polygon": {
         "old": {},
         "new": {
-            "TestAaveV3Adapter": {
-                "address": "0x0F4ee1b1B6451b7cE2b49378094695d3d6dE2e1d",
-                "deployedBlock": 68633896,
-                "chainId": 137
-            },
             "TestMigratorV2": {
                 "address": "0x70395912F72861FD42cA33Ce671bC936E5f29dCF",
                 "deployedBlock": 68662603,
                 "chainId": 137
             },
+            "TestAaveV3Adapter": {
+                "address": "0x0F4ee1b1B6451b7cE2b49378094695d3d6dE2e1d",
+                "deployedBlock": 68633896,
+                "chainId": 137
+            },
             "TestUniswapV3PathFinder": {
-                "address": "0xf145bc354aeca1E5EafB7f7F7d431cC7A308A990",
-                "deployedBlock": 68662642,
+                "address": "0xdb83bc921d49Bf73326D7BBA36a8CF8211d62534",
+                "deployedBlock": 69229541,
                 "chainId": 137
             }
         }
@@ -127,19 +97,19 @@
     "optimisticEthereum": {
         "old": {},
         "new": {
-            "TestAaveV3Adapter": {
-                "address": "0x74c15Aa6f11029e900493e53898dD558aF4B842f",
-                "deployedBlock": 132743938,
-                "chainId": 10
-            },
             "TestMigratorV2": {
                 "address": "0x96d5e6C5821a384237673A4444ACf6721E4d9E1d",
                 "deployedBlock": 132747163,
                 "chainId": 10
             },
+            "TestAaveV3Adapter": {
+                "address": "0x74c15Aa6f11029e900493e53898dD558aF4B842f",
+                "deployedBlock": 132743938,
+                "chainId": 10
+            },
             "TestUniswapV3PathFinder": {
-                "address": "0x6E32Bae1993217Fc85bD4C97EF02C2C4962bCCBf",
-                "deployedBlock": 132749127,
+                "address": "0xf145bc354aeca1E5EafB7f7F7d431cC7A308A990",
+                "deployedBlock": 133383343,
                 "chainId": 10
             }
         }

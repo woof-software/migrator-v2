@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 
 pragma solidity 0.8.28;
 
@@ -14,8 +14,40 @@ import {IComet} from "./interfaces/IComet.sol";
 
 /**
  * @title MigratorV2
- * @notice This contract facilitates migration of user positions between protocols using flash loans from Uniswap V3.
- * @dev The contract interacts with Uniswap V3 for flash loans and uses protocol adapters to execute migrations.
+ * @notice Facilitates the migration of user positions from external lending protocols into Compound III (Comet),
+ *         using Uniswap V3 flash loans as optional liquidity to cover temporary shortfalls.
+ *
+ * @dev MigratorV2 is designed to be a generic migration orchestrator that supports multiple source protocols through
+ *      a modular adapter system. Each adapter implements the logic necessary to withdraw collateral, repay debt, and
+ *      supply the assets into the target Comet market on behalf of a user.
+ *
+ *      Key Features:
+ *      - Supports protocol-specific migration via registered adapter contracts (e.g., SparkAdapter, MorphoAdapter).
+ *      - Optionally leverages Uniswap V3 flash loans to cover liquidity gaps during migration.
+ *      - Uses `delegatecall` to adapters, ensuring state context is preserved.
+ *      - Enforces strict callback validation using precomputed hashes to prevent replay or spoofed callbacks.
+ *      - Owner-controlled registration and configuration of supported adapters and Comet markets.
+ *
+ *      Core Flow:
+ *      1. A user initiates migration via `migrate()` specifying:
+ *         - The source protocol adapter
+ *         - The target Comet market
+ *         - Encoded migration data
+ *         - Flash loan amount (optional)
+ *      2. If `flashAmount > 0`, a flash loan is requested from the associated Uniswap V3 pool.
+ *         On callback, `uniswapV3FlashCallback()` executes the migration via the adapter and ensures repayment.
+ *      3. If `flashAmount == 0`, the migration is executed immediately without borrowing.
+ *      4. Upon success, a `MigrationExecuted` event is emitted.
+ *
+ *      Security Considerations:
+ *      - Only whitelisted adapters may be used.
+ *      - Only configured Comet contracts with valid flash loan data may be targeted.
+ *      - All Uniswap callbacks are strictly validated by hash and sender address.
+ *      - Owner functions include pausing, adapter registration, and flash data configuration.
+ *
+ *      Limitations:
+ *      - Assumes adapter logic is safe and performs proper token accounting.
+ *      - Assumes flash loan repayment tokens are supported by Uniswap V3 and Comet.
  */
 contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownable {
     /// -------- Libraries -------- ///
@@ -37,6 +69,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
     }
 
     /// --------State Variables-------- ///
+
+    /// @notice Hash of the callback data used to validate the callback
+    bytes32 private _storedCallbackHash;
 
     /**
      * @dev List of all registered protocol adapters.
@@ -108,6 +143,11 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
      * @param comet Address of the Comet contract that is already configured.
      */
     error CometAlreadyConfigured(address comet);
+
+    /// @dev Reverts if the callback data hash does not match the stored hash.
+    error InvalidCallbackHash();
+
+    error DelegatecallFailed();
 
     /// --------Events-------- ///
 
@@ -218,15 +258,36 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
     receive() external payable {}
 
     /**
-     * @notice Initiates the migration process using a flash loan from Uniswap V3.
-     * @param adapter Address of the protocol adapter that handles the migration logic.
-     * @param comet Address of the Comet contract associated with the migration.
-     * @param migrationData Encoded data containing migration details, specific to the adapter.
-     * @param flashAmount Amount of tokens to borrow in the flash loan.
-     * @dev Validates the adapter and Comet contract, ensures the flash amount and migration data are valid.
-     * @dev Encodes the migration data and initiates a flash loan from Uniswap V3.
-     * @dev Reverts with {InvalidFlashAmount} if the flash loan amount is zero.
-     * @dev Reverts with {InvalidMigrationData} if the migration data is empty.
+     * @notice Initiates a user position migration into Compound III (Comet) via a registered protocol adapter.
+     *
+     * @dev This function performs the following:
+     *  1. Validates that the specified adapter is registered and that the target Comet contract is configured.
+     *  2. Ensures the provided `migrationData` is not empty.
+     *  3. Encodes and hashes the migration context for later verification during callback execution.
+     *  4. If `flashAmount > 0`, initiates a flash loan from the configured Uniswap V3 pool by calling its `flash()` method.
+     *  5. If `flashAmount == 0`, calls the adapter directly via `delegatecall` and passes encoded flashloanData with amount 0.
+     *  6. If the delegatecall succeeds, emits the {MigrationExecuted} event with zero flash fee.
+     *
+     * @param adapter The address of the protocol adapter responsible for handling migration logic.
+     * @param comet The address of the target Compound III (Comet) market.
+     * @param migrationData ABI-encoded input containing migration strategy and user-specific data.
+     * @param flashAmount The amount of tokens to borrow via Uniswap V3 flash loan. Use zero if no borrowing is needed.
+     *
+     * Requirements:
+     * - `adapter` must be registered in `allowedAdapters`.
+     * - `comet` must have associated flash loan configuration (`_flashData[comet]`).
+     * - `migrationData` must not be empty.
+     *
+     * Effects:
+     * - Stores a callback hash to validate flash loan integrity.
+     * - Either initiates a flash loan or directly calls the adapter logic depending on `flashAmount`.
+     * - Emits {MigrationExecuted} upon successful completion.
+     *
+     * Reverts:
+     * - {InvalidMigrationData} if `migrationData.length == 0`.
+     * - {InvalidAdapter} if the adapter is not registered.
+     * - {CometIsNotSupported} if flash data for `comet` is missing.
+     * - {DelegatecallFailed} or raw revert if adapter logic fails.
      */
     function migrate(
         address adapter,
@@ -240,6 +301,8 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
 
         bytes memory callbackData = abi.encode(user, adapter, comet, migrationData, flashAmount);
 
+        _storedCallbackHash = keccak256(callbackData);
+
         FlashData memory flashData = _flashData[comet];
 
         if (flashAmount != 0) {
@@ -250,8 +313,16 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
                 callbackData
             );
         } else {
+            bytes memory flashloanData = abi.encode(flashData.liquidityPool, flashData.baseToken, 0);
+
             (bool success, bytes memory result) = adapter.delegatecall(
-                abi.encodeWithSelector(IProtocolAdapter.executeMigration.selector, user, comet, migrationData)
+                abi.encodeWithSelector(
+                    IProtocolAdapter.executeMigration.selector,
+                    user,
+                    comet,
+                    migrationData,
+                    flashloanData
+                )
             );
 
             if (!success) {
@@ -264,21 +335,51 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
                 }
             }
 
+            _storedCallbackHash = bytes32(0);
+
             emit MigrationExecuted(adapter, user, comet, 0, 0);
         }
     }
 
     /**
-     * @notice Handles the logic executed during a Uniswap V3 flash loan callback.
-     * @param fee0 Fee for borrowing token0 in the flash loan.
-     * @param fee1 Fee for borrowing token1 in the flash loan.
-     * @param data Encoded data containing migration details, user information, and flash loan specifics.
-     * @dev Decodes the data passed in the flash loan, executes the migration using the protocol adapter,
-     * validates the repayment of the flash loan with fees, and emits the {AdapterExecuted} event.
-     * @dev Reverts with {SenderNotUniswapPool} if the caller is not the expected Uniswap V3 liquidity pool.
-     * @dev Reverts with {ERC20TransferFailure} if the token transfer to repay the flash loan fails.
+     * @notice Executes migration logic during the Uniswap V3 flash loan callback.
+     *
+     * @dev This function is invoked by the Uniswap V3 pool after a flash loan is issued.
+     * It performs the following steps:
+     *  1. Validates the callback integrity by comparing the `keccak256` hash of the provided `data`
+     *     with the stored `_storedCallbackHash`.
+     *  2. Decodes the migration context including the user address, adapter, comet, and migration input.
+     *  3. Verifies that the caller is the expected Uniswap V3 pool associated with the target `comet`.
+     *  4. Computes the repayment amount, including Uniswap's flash loan fee.
+     *  5. Invokes the protocol adapter logic via `delegatecall`, passing the full context and encoded flash loan details.
+     *  6. Emits the {MigrationExecuted} event if the adapter call succeeds.
+     *
+     * @param fee0 The fee owed for borrowing `token0` from the Uniswap pool.
+     * @param fee1 The fee owed for borrowing `token1` from the Uniswap pool.
+     * @param data ABI-encoded callback payload containing:
+     *        - user: Address of the user initiating the migration.
+     *        - adapter: Address of the protocol adapter.
+     *        - comet: Address of the Comet market.
+     *        - migrationData: Adapter-specific migration data.
+     *        - flashAmount: The amount borrowed via flash loan.
+     *
+     * Requirements:
+     * - The function must be called by the exact Uniswap V3 liquidity pool configured for the `comet`.
+     * - The hash of `data` must match `_storedCallbackHash`.
+     * - The protocol adapter must successfully execute the migration via `delegatecall`.
+     *
+     * Effects:
+     * - Executes custom migration logic using the borrowed liquidity.
+     * - Emits {MigrationExecuted} with flash amount and computed fee.
+     *
+     * Reverts:
+     * - {InvalidCallbackHash} if the callback data does not match expectations.
+     * - {SenderNotUniswapPool} if the caller is not the configured Uniswap pool.
+     * - {DelegatecallFailed} or raw revert if adapter execution fails.
      */
     function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external {
+        if (keccak256(data) != _storedCallbackHash) revert InvalidCallbackHash();
+
         (address user, address adapter, address comet, bytes memory migrationData, uint256 flashAmount) = abi.decode(
             data,
             (address, address, address, bytes, uint256)
@@ -290,8 +391,16 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
 
         uint256 flashAmountWithFee = flashAmount + (flashData.isToken0 ? fee0 : fee1);
 
+        bytes memory flashloanData = abi.encode(flashData.liquidityPool, flashData.baseToken, flashAmountWithFee);
+
         (bool success, bytes memory result) = adapter.delegatecall(
-            abi.encodeWithSelector(IProtocolAdapter.executeMigration.selector, user, comet, migrationData)
+            abi.encodeWithSelector(
+                IProtocolAdapter.executeMigration.selector,
+                user,
+                comet,
+                migrationData,
+                flashloanData
+            )
         );
 
         if (!success) {
@@ -300,17 +409,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
                     revert(add(32, result), mload(result))
                 }
             } else {
-                revert("Delegatecall failed");
+                revert DelegatecallFailed();
             }
         }
-
-        uint256 balance = IERC20(flashData.baseToken).balanceOf(address(this));
-
-        if (balance < flashAmountWithFee) {
-            IComet(comet).withdrawFrom(user, address(this), address(flashData.baseToken), flashAmountWithFee - balance);
-        }
-
-        IERC20(flashData.baseToken).safeTransfer(flashData.liquidityPool, flashAmountWithFee);
 
         emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
     }
@@ -439,7 +540,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
             revert CometAlreadyConfigured(comet);
         }
 
-        _flashData[comet] = FlashData(flashData.liquidityPool, flashData.baseToken, flashData.isToken0);
+        _flashData[comet] = flashData;
 
         emit FlashDataConfigured(comet, flashData.liquidityPool, flashData.baseToken);
     }

@@ -4,26 +4,23 @@ dotenv.config();
 import nodeConfig from "config";
 import hre from "hardhat";
 import path from "path";
-import { getAddressSaver, verify } from "../utils/helpers";
+import { getAddressSaver, verify } from "./utils/helpers";
 const { ethers, network } = hre;
 
-const CONTRACT_NAME = "TestUniswapV3PathFinder";
+import { MigratorV2__factory } from "./../../typechain-types";
+
+const CONTRACT_NAME: string = "MorphoUsdsAdapter";
 const FILE_NAME = "deploymentAddresses";
 const PATH_TO_FILE = path.join(__dirname, `./${FILE_NAME}.json`);
-
-// Use the network name to get the config.
-// const args = {
-// "factory": "0x0",
-// "quoterV2": "0x0",
-// "dai": "0x0",
-// "usds": "0x0"
-// };
 
 async function deploy() {
     const [deployer] = await ethers.getSigners();
 
-    const config = process.env.npm_config_args_network;
-    const args = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[config || "hardhat"][CONTRACT_NAME];
+    const config = nodeConfig.util.toObject(nodeConfig.get("deploymentParams"))[
+        process.env.npm_config_args_network || "hardhat"
+    ];
+    const args = config[CONTRACT_NAME];
+    console.log("Block number:", await ethers.provider.getBlockNumber());
 
     console.log("\n --- Deployed data --- \n");
     console.log("* ", deployer.address, "- Deployer address");
@@ -33,7 +30,7 @@ async function deploy() {
     console.log("\n --- ------- ---- --- ");
 
     const Contract = await ethers.getContractFactory(CONTRACT_NAME);
-    const contract = await Contract.connect(deployer).deploy(args.factory, args.quoterV2, args.dai, args.usds);
+    const contract = await Contract.connect(deployer).deploy(args);
     const deployTransaction = (await contract.deployed()).deployTransaction.wait();
 
     console.log(`Contract: \`${CONTRACT_NAME}\` is deployed to \`${contract.address}\`|\`${hre.network.name}\`.`);
@@ -49,7 +46,7 @@ async function deploy() {
     );
 
     console.log("\nDeployment is completed.");
-    await verify(contract.address, [args.factory, args.quoterV2, args.dai, args.usds]);
+    await verify(contract.address, [args]);
     console.log("\nDone.");
 }
 

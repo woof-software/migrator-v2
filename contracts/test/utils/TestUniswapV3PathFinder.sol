@@ -6,7 +6,12 @@ import {UniswapV3PathFinder} from "../../../contracts/utils/UniswapV3PathFinder.
 contract TestUniswapV3PathFinder is UniswapV3PathFinder {
     bool public immutable IS_TEST_DEPLOYMENT;
 
-    constructor(address _factory, address _quoterV2) UniswapV3PathFinder(_factory, _quoterV2) {
+    constructor(
+        address _factory,
+        address _quoterV2,
+        address _dai,
+        address _usds
+    ) UniswapV3PathFinder(_factory, _quoterV2, _dai, _usds) {
         IS_TEST_DEPLOYMENT = true;
     }
 }

@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
+
 pragma solidity 0.8.28;
 
 interface IQuoterV2 {
@@ -32,68 +33,131 @@ interface IUniswapV3Factory {
 }
 
 contract UniswapV3PathFinder {
+    // ----------------- Types -----------------
+
+    /// @notice Parameters for quoting a swap.
     struct QuoteSwapParams {
-        bytes path;
-        uint256 amountIn;
-        uint256 amountOut;
-        uint256 maxGasEstimate;
+        bytes path; ///< Encoded swap path.
+        uint256 amountIn; ///< Amount of input tokens.
+        uint256 amountOut; ///< Amount of output tokens.
+        uint256 maxGasEstimate; ///< Maximum gas estimate for the swap.
     }
 
+    /// @notice Parameters for a single swap.
     struct SingleSwapParams {
-        address tokenIn;
-        address tokenOut;
-        uint256 amountIn;
-        uint256 amountOut;
-        address excludedPool;
-        uint256 maxGasEstimate;
+        address tokenIn; ///< Address of the input token.
+        address tokenOut; ///< Address of the output token.
+        uint256 amountIn; ///< Amount of input tokens.
+        uint256 amountOut; ///< Amount of output tokens.
+        address excludedPool; ///< Address of a pool to be excluded.
+        uint256 maxGasEstimate; ///< Maximum gas estimate allowed.
     }
 
+    /// @notice Parameters for a multi-hop swap.
     struct MultiSwapParams {
-        address tokenIn;
-        address tokenOut;
-        address[] connectors;
-        uint256 amountIn;
-        uint256 amountOut;
-        address excludedPool;
-        uint256 maxGasEstimate;
+        address tokenIn; ///< Address of the input token.
+        address tokenOut; ///< Address of the output token.
+        address[] connectors; ///< Array of intermediate tokens.
+        uint256 amountIn; ///< Amount of input tokens.
+        uint256 amountOut; ///< Amount of output tokens.
+        address excludedPool; ///< Address of a pool to be excluded.
+        uint256 maxGasEstimate; ///< Maximum gas estimate allowed.
     }
 
-    uint256[] public availableFeeTiers = [100, 500, 3000, 10000];
-    address public factory;
-    address public quoterV2;
+    // ----------------- Storage -----------------
 
+    /// @notice Address of the DAI token.
+    address public immutable DAI;
+
+    /// @notice Address of the USDS token.
+    address public immutable USDS;
+
+    /// @notice Address of the Uniswap V3 Factory contract.
+    address public immutable FACTORY;
+
+    /// @notice Address of the Uniswap V3 Quoter V2 contract.
+    address public immutable QUOTER_V2;
+
+    /// @notice Available Uniswap V3 fee tiers.
+    uint256[] public availableFeeTiers = [100, 500, 3000, 10000];
+
+    // ----------------- Errors -----------------
+
+    /// @notice Error thrown when an address is zero.
+    error InvalidZeroAddress();
+
+    /// @notice Error thrown when no swap pools are found.
     error SwapPoolsNotFound();
+
+    /// @notice Error thrown when no connector tokens are provided.
     error MustBeAtLeastOneConnector();
+
+    /// @notice Error thrown when neither amountIn nor amountOut is specified.
     error MustBeSetAmountInOrAmountOut();
+
+    /// @notice Error thrown when both amountIn and amountOut are specified.
     error OnlyOneAmountMustBeSet();
+
+    /// @notice Error thrown when maxGasEstimate is not set.
     error MustBeSetMaxGasEstimate();
 
-    constructor(address _factory, address _quoterV2) {
-        factory = _factory;
-        quoterV2 = _quoterV2;
+    /// @notice Error thrown for an invalid contract configuration.
+    error InvalidConfiguration();
+
+    // ----------------- Constructor -----------------
+
+    /**
+     * @notice Constructor to initialize the contract.
+     * @param _factory Address of the Uniswap V3 Factory contract.
+     * @param _quoterV2 Address of the Uniswap V3 QuoterV2 contract.
+     * @param _dai Address of the DAI token.
+     * @param _usds Address of the USDS token.
+     */
+    constructor(address _factory, address _quoterV2, address _dai, address _usds) {
+        if (_factory == address(0) || _quoterV2 == address(0)) revert InvalidZeroAddress();
+
+        if ((_dai == address(0) && _usds != address(0)) || (_dai != address(0) && _usds == address(0)))
+            revert InvalidConfiguration();
+
+        FACTORY = _factory;
+        QUOTER_V2 = _quoterV2;
+        DAI = _dai;
+        USDS = _usds;
     }
 
+    // ----------------- External Functions -----------------
+
+    /**
+     * @notice Finds the best single-hop swap path for a given input and output token.
+     * @param params The parameters for the single swap.
+     * @return path Encoded swap path.
+     * @return estimatedAmount Estimated amount after swap.
+     * @return gasEstimate Estimated gas required for the swap.
+     */
     function getBestSingleSwapPath(
         SingleSwapParams memory params
     ) external returns (bytes memory path, uint256 estimatedAmount, uint256 gasEstimate) {
         SingleSwapParams memory params_ = params;
         bool exactInput = params_.amountIn > 0;
 
-        (path, estimatedAmount, gasEstimate) = _getBestSingleSwapPath(
-            SingleSwapParams({
-                tokenIn: params_.tokenIn,
-                tokenOut: params_.tokenOut,
-                amountIn: params_.amountIn,
-                amountOut: params_.amountOut,
-                excludedPool: params_.excludedPool,
-                maxGasEstimate: params_.maxGasEstimate
-            }),
-            exactInput
-        );
+        if (params_.tokenIn == DAI && params_.tokenOut == USDS) {
+            return (abi.encodePacked(DAI, USDS), exactInput ? params_.amountIn : params_.amountOut, 0);
+        } else if (params_.tokenIn == USDS && params_.tokenOut == DAI) {
+            return (abi.encodePacked(USDS, DAI), exactInput ? params_.amountIn : params_.amountOut, 0);
+        }
+
+        (path, estimatedAmount, gasEstimate) = _getBestSingleSwapPath(params_, exactInput);
 
         if (estimatedAmount == 0) revert SwapPoolsNotFound();
     }
 
+    /**
+     * @notice Finds the best multi-hop swap path for a given input and output token.
+     * @param params The parameters for the multi swap.
+     * @return path Encoded swap path.
+     * @return estimatedAmount Estimated amount after swap.
+     * @return gasEstimate Estimated gas required for the swap.
+     */
     function getBestMultiSwapPath(
         MultiSwapParams memory params
     ) external returns (bytes memory path, uint256 estimatedAmount, uint256 gasEstimate) {
@@ -116,7 +180,7 @@ contract UniswapV3PathFinder {
                     excludedPool: params_.excludedPool,
                     maxGasEstimate: params_.maxGasEstimate
                 }),
-                true // set "true" because we don't want to switch the tokenIn and tokenOut in the formatSinglePath function for multi-swap
+                true ///< Set "true" because we don't want to switch the tokenIn and tokenOut in the formatSinglePath function for multi-swap
             );
         }
 
@@ -130,7 +194,11 @@ contract UniswapV3PathFinder {
                 params_.maxGasEstimate
             );
 
-            if (bestAmount > estimatedAmount) {
+            if ((bestAmount != 0 && estimatedAmount == 0) || (exactInput && estimatedAmount < bestAmount)) {
+                estimatedAmount = bestAmount;
+                path = bestPath;
+                gasEstimate = gasEstimate_;
+            } else if (!exactInput && bestAmount != 0 && estimatedAmount > bestAmount) {
                 estimatedAmount = bestAmount;
                 path = bestPath;
                 gasEstimate = gasEstimate_;
@@ -140,6 +208,16 @@ contract UniswapV3PathFinder {
         if (estimatedAmount == 0) revert SwapPoolsNotFound();
     }
 
+    // ----------------- Internal Functions -----------------
+
+    /**
+     * @notice Internal function to find the best single-hop swap path.
+     * @param params The parameters for the single swap.
+     * @param exactInput Boolean flag indicating if the swap is exact input or output.
+     * @return singlePath The best single-hop swap path.
+     * @return estimatedAmount The estimated amount received from the swap.
+     * @return gasEstimate The estimated gas required for the swap.
+     */
     function _getBestSingleSwapPath(
         SingleSwapParams memory params,
         bool exactInput
@@ -148,7 +226,7 @@ contract UniswapV3PathFinder {
 
         for (uint256 i = 0; i < availableFeeTiers.length; ++i) {
             uint24 fee = uint24(availableFeeTiers[i]);
-            address pool = IUniswapV3Factory(factory).getPool(params_.tokenIn, params_.tokenOut, fee);
+            address pool = IUniswapV3Factory(FACTORY).getPool(params_.tokenIn, params_.tokenOut, fee);
 
             if (pool == address(0) || pool == params_.excludedPool) continue;
 
@@ -163,7 +241,11 @@ contract UniswapV3PathFinder {
                 })
             );
 
-            if (estimatedAmount_ > estimatedAmount) {
+            if ((estimatedAmount_ != 0 && estimatedAmount == 0) || (exactInput && estimatedAmount < estimatedAmount_)) {
+                estimatedAmount = estimatedAmount_;
+                singlePath = path_;
+                gasEstimate = gasEstimate_;
+            } else if (!exactInput && estimatedAmount_ != 0 && estimatedAmount > estimatedAmount_) {
                 estimatedAmount = estimatedAmount_;
                 singlePath = path_;
                 gasEstimate = gasEstimate_;
@@ -171,19 +253,18 @@ contract UniswapV3PathFinder {
         }
     }
 
-    function _formatSinglePath(
-        bool exactInput,
-        address tokenIn,
-        address tokenOut,
-        uint24 fee
-    ) internal pure returns (bytes memory path) {
-        if (exactInput) {
-            path = abi.encodePacked(tokenIn, fee, tokenOut);
-        } else {
-            path = abi.encodePacked(tokenOut, fee, tokenIn);
-        }
-    }
-
+    /**
+     * @notice Internal function to find the best multi-hop swap path.
+     * @param exactInput Boolean flag indicating if the swap is exact input or output.
+     * @param bestSinglePath The best single-hop swap path identified.
+     * @param tokenOut The output token address.
+     * @param amount The amount to swap.
+     * @param excludedPool Address of the pool to be excluded.
+     * @param maxGasEstimate The maximum gas estimate allowed.
+     * @return multiPath The best multi-hop swap path.
+     * @return estimatedAmount The estimated amount received from the swap.
+     * @return gasEstimate The estimated gas required for the swap.
+     */
     function _getBestMultiSwapPath(
         bool exactInput,
         bytes memory bestSinglePath,
@@ -204,7 +285,7 @@ contract UniswapV3PathFinder {
 
         for (uint256 i = 0; i < availableFeeTiers.length; ++i) {
             uint24 fee = uint24(availableFeeTiers[i]);
-            address pool = IUniswapV3Factory(factory).getPool(connectorTokenIn, tokenOut_, fee);
+            address pool = IUniswapV3Factory(FACTORY).getPool(connectorTokenIn, tokenOut_, fee);
 
             if (pool == address(0) || pool == excludedPool) continue;
 
@@ -219,7 +300,13 @@ contract UniswapV3PathFinder {
                 })
             );
 
-            if (estimatedAmount_ > estimatedAmount) {
+            if (
+                (estimatedAmount_ != 0 && estimatedAmount == 0) || (exactInput_ && estimatedAmount < estimatedAmount_)
+            ) {
+                estimatedAmount = estimatedAmount_;
+                multiPath = multiPath_;
+                gasEstimate = gasEstimate_;
+            } else if (!exactInput_ && estimatedAmount_ != 0 && estimatedAmount > estimatedAmount_) {
                 estimatedAmount = estimatedAmount_;
                 multiPath = multiPath_;
                 gasEstimate = gasEstimate_;
@@ -227,6 +314,13 @@ contract UniswapV3PathFinder {
         }
     }
 
+    /**
+     * @notice Internal function to quote a swap.
+     * @dev Determines the estimated amount and gas cost for a given swap path.
+     * @param params The parameters required for quoting a swap.
+     * @return estimatedAmount The estimated amount after swap.
+     * @return gasEstimate The estimated gas required for the swap.
+     */
     function _quoteSwap(QuoteSwapParams memory params) internal returns (uint256 estimatedAmount, uint256 gasEstimate) {
         QuoteSwapParams memory params_ = params;
 
@@ -236,7 +330,7 @@ contract UniswapV3PathFinder {
 
         if (params_.amountIn > 0) {
             try
-                IQuoterV2(quoterV2).quoteExactInput{gas: params_.maxGasEstimate}(params_.path, params_.amountIn)
+                IQuoterV2(QUOTER_V2).quoteExactInput{gas: params_.maxGasEstimate}(params_.path, params_.amountIn)
             returns (uint256 amountOut_, uint160[] memory, uint32[] memory, uint256 gasEstimate_) {
                 estimatedAmount = amountOut_;
                 gasEstimate = gasEstimate_;
@@ -245,7 +339,7 @@ contract UniswapV3PathFinder {
             }
         } else {
             try
-                IQuoterV2(quoterV2).quoteExactOutput{gas: params_.maxGasEstimate}(params_.path, params_.amountOut)
+                IQuoterV2(QUOTER_V2).quoteExactOutput{gas: params_.maxGasEstimate}(params_.path, params_.amountOut)
             returns (uint256 amountIn_, uint160[] memory, uint32[] memory, uint256 gasEstimate_) {
                 estimatedAmount = amountIn_;
                 gasEstimate = gasEstimate_;
@@ -255,23 +349,38 @@ contract UniswapV3PathFinder {
         }
     }
 
-    function _extractConnectorToken(bytes memory path) internal pure returns (address lastToken) {
-        assembly {
-            // Extract the first 20 bytes as the tokenIn address
-            lastToken := mload(add(path, 20))
+    /**
+     * @notice Internal function to format the swap path for single-hop swaps.
+     * @param exactInput Boolean flag indicating if the swap is exact input or output.
+     * @param tokenIn Address of the input token.
+     * @param tokenOut Address of the output token.
+     * @param fee Fee tier for the Uniswap pool.
+     * @return path Encoded swap path.
+     */
+    function _formatSinglePath(
+        bool exactInput,
+        address tokenIn,
+        address tokenOut,
+        uint24 fee
+    ) internal pure returns (bytes memory path) {
+        if (exactInput) {
+            path = abi.encodePacked(tokenIn, fee, tokenOut);
+        } else {
+            path = abi.encodePacked(tokenOut, fee, tokenIn);
         }
     }
 
-    function _devBytesToHexString(bytes memory data) internal pure returns (string memory) {
-        bytes16 HEX_SYMBOLS = "0123456789abcdef";
-        uint256 length = data.length;
-        bytes memory buffer = new bytes(2 * length + 2);
-        buffer[0] = "0";
-        buffer[1] = "x";
-        for (uint256 i = 0; i < length; i++) {
-            buffer[2 + i * 2] = HEX_SYMBOLS[uint8(data[i]) >> 4];
-            buffer[3 + i * 2] = HEX_SYMBOLS[uint8(data[i]) & 0x0f];
+    /**
+     * @notice Extracts the last token in a given encoded swap path.
+     * @param path The encoded swap path.
+     * @return lastToken The last token in the path.
+     */
+    function _extractConnectorToken(bytes memory path) internal pure returns (address lastToken) {
+        assembly {
+            // Load the length of the path
+            let pathLength := mload(path)
+            // Extract the last 20 bytes as tokenOut address
+            lastToken := mload(add(path, pathLength))
         }
-        return string(buffer);
     }
 }
