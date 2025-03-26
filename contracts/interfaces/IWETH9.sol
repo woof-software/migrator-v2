@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.16;
+pragma solidity 0.8.28;
 
-import "./IERC20NonStandard.sol";
+
+import {IERC20NonStandard} from "./IERC20NonStandard.sol";
 
 /// @title Interface for WETH9
 interface IWETH9 is IERC20NonStandard {
