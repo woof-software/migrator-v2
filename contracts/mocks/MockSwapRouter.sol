@@ -13,9 +13,18 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      It assumes a 1:1 swap rate between tokens for simplicity.
  */
 contract MockSwapRouter is ISwapRouter {
-    bool public negativeCaseRedeem;
-
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+    bool public testingNegativeScenarioOne;
+    bool public testingNegativeScenarioTwo;
+
+    function setTestingNegativeScenarioOne(bool _testingNegativeScenario) external {
+        testingNegativeScenarioOne = _testingNegativeScenario;
+    }
+
+    function setTestingNegativeScenarioTwo(bool _testingNegativeScenario) external {
+        testingNegativeScenarioTwo = _testingNegativeScenario;
+    }
 
     /**
      * @notice Executes a swap given an exact input (amountIn) to get as much output as possible.
@@ -26,6 +35,9 @@ contract MockSwapRouter is ISwapRouter {
     function exactInputSingle(
         ExactInputSingleParams calldata params
     ) external payable override returns (uint256 amountOut) {
+        if (testingNegativeScenarioOne) {
+            revert("Negative scenario");
+        }
         // Transfer tokenIn from caller
         IERC20(params.tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
 
@@ -44,6 +56,9 @@ contract MockSwapRouter is ISwapRouter {
      * @return amountOut The amount of the received token.
      */
     function exactInput(ExactInputParams calldata params) external payable override returns (uint256 amountOut) {
+        if (testingNegativeScenarioOne) {
+            revert("Negative scenario");
+        }
         // Decode the path to get the input and output tokens
         (address tokenIn, address tokenOut) = _decodePath(params.path);
 
@@ -72,6 +87,9 @@ contract MockSwapRouter is ISwapRouter {
     function exactOutputSingle(
         ExactOutputSingleParams calldata params
     ) external payable override returns (uint256 amountIn) {
+        if (testingNegativeScenarioTwo) {
+            revert("Negative scenario");
+        }
         // amountIn = amountOut in our mock scenario
         amountIn = params.amountOut;
 
@@ -89,6 +107,10 @@ contract MockSwapRouter is ISwapRouter {
      * @return amountIn The amount of input tokens spent.
      */
     function exactOutput(ExactOutputParams calldata params) external payable override returns (uint256 amountIn) {
+        if (testingNegativeScenarioTwo) {
+            revert("Negative scenario");
+        }
+
         (, address tokenOut) = _decodePath(params.path);
 
         // amountIn = amountOut (1:1)

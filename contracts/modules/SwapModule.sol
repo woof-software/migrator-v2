@@ -171,15 +171,15 @@ abstract contract SwapModule is CommonErrors {
      * @return slippageAmount The allowable amount of tokens for slippage.
      * @dev Reverts with {InvalidSlippageBps} if the provided `slippageBps` exceeds the maximum allowable BPS (MAX_BPS).
      */
-    function _calculateSlippageAmount(
-        uint256 amount,
-        uint256 slippageBps
-    ) internal pure returns (uint256 slippageAmount) {
-        if (slippageBps > MAX_BPS) revert InvalidSlippageBps(slippageBps);
+    // function _calculateSlippageAmount(
+    //     uint256 amount,
+    //     uint256 slippageBps
+    // ) internal pure returns (uint256 slippageAmount) {
+    //     if (slippageBps > MAX_BPS) revert InvalidSlippageBps(slippageBps);
 
-        // Calculate the amount of slippage
-        slippageAmount = (amount * (MAX_BPS - slippageBps)) / MAX_BPS;
-    }
+    //     // Calculate the amount of slippage
+    //     slippageAmount = (amount * (MAX_BPS - slippageBps)) / MAX_BPS;
+    // }
 
     /// --------Internal Helper Functions-------- ///
 

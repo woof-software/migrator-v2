@@ -294,7 +294,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
         address comet,
         bytes calldata migrationData,
         uint256 flashAmount
-    ) external validAdapter(adapter) validComet(comet) {
+    ) external nonReentrant validAdapter(adapter) validComet(comet) {
         if (migrationData.length == 0) revert InvalidMigrationData();
 
         address user = msg.sender;

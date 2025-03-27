@@ -12,6 +12,8 @@ contract MockDaiUsds {
     address public dai;
     address public usds;
 
+    bool public testingNegativeScenario;
+
     /**
      * @param _dai The address of the DAI token
      * @param _usds The address of the USDS token
@@ -21,6 +23,10 @@ contract MockDaiUsds {
         require(_usds != address(0), "Invalid USDS address");
         dai = _dai;
         usds = _usds;
+    }
+
+    function setTestingNegativeScenario(bool _testingNegativeScenario) external {
+        testingNegativeScenario = _testingNegativeScenario;
     }
 
     /**
@@ -34,7 +40,7 @@ contract MockDaiUsds {
 
         // For simplicity, assume 1:1 conversion
         // Transfer USDS to user
-        require(IERC20(usds).transfer(usr, wad), "USDS transfer failed");
+        require(IERC20(usds).transfer(usr, (testingNegativeScenario ? (wad / 2) : wad)), "USDS transfer failed");
     }
 
     /**
@@ -48,6 +54,6 @@ contract MockDaiUsds {
 
         // For simplicity, assume 1:1 conversion
         // Transfer DAI to user
-        require(IERC20(dai).transfer(usr, wad), "DAI transfer failed");
+        require(IERC20(dai).transfer(usr, (testingNegativeScenario ? (wad / 2) : wad)), "DAI transfer failed");
     }
 }
