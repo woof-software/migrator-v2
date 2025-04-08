@@ -10,8 +10,6 @@ import {SwapModule} from "../modules/SwapModule.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
 import {IMorpho, MarketParams, Id, Market, Position} from "../interfaces/morpho/IMorpho.sol";
 import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
-import {IWETH9} from "../interfaces/IWETH9.sol";
-import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /**
  * @title MorphoUsdsAdapter
@@ -65,7 +63,7 @@ import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
  *      - Only DAI ⇄ USDS conversions are supported (for USDS-based Comet markets).
  *      - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
  */
-contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, DelegateReentrancyGuard {
+contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
 
     using SharesMathLib for uint256;
@@ -79,7 +77,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      * @param daiUsdsConverter Address of the DAI-USDS converter contract.
      * @param dai Address of the DAI token.
      * @param usds Address of the USDS token.
-     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH).
      * @param morphoLendingPool Address of the Morpho Lending Pool contract.
      * @param isFullMigration Flag indicating whether the migration requires all debt to be cleared.
      */
@@ -88,7 +85,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         address daiUsdsConverter;
         address dai;
         address usds;
-        address wrappedNativeToken;
         address morphoLendingPool;
         bool isFullMigration;
     }
@@ -129,11 +125,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
 
     /// --------Constants-------- ///
 
-    /// @notice Address of the native token (e.g., ETH)
-    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
-    /// @notice Address of the wrapped native token (e.g., WETH).
-    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
+    uint8 private constant CONVERT_PATH_LENGTH = 40;
 
     /// @notice Boolean indicating whether the migration is a full migration
     bool public immutable IS_FULL_MIGRATION;
@@ -155,7 +147,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      * - daiUsdsConverter Address of the DAI to USDS converter contract
      * - dai Address of the DAI token
      * - usds Address of the USDS token
-     * - wrappedNativeToken Address of the wrapped native token (e.g., WETH)
      * - sparkLendingPool Address of the Morpho Lending Pool contract
      * - sparkDataProvider Address of the Morpho Data Provider contract
      * - isFullMigration Boolean indicating whether the migration is full or partial
@@ -167,12 +158,10 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         SwapModule(deploymentParams.uniswapRouter)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
-        if (deploymentParams.morphoLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
-            revert InvalidZeroAddress();
+        if (deploymentParams.morphoLendingPool == address(0)) revert InvalidZeroAddress();
 
         LENDING_POOL = IMorpho(deploymentParams.morphoLendingPool);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
-        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -206,7 +195,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         address comet,
         bytes calldata migrationData,
         bytes calldata flashloanData
-    ) external nonReentrant {
+    ) external {
         // Decode the migration data into an SparkPosition struct
         MorphoPosition memory position = abi.decode(migrationData, (MorphoPosition));
 
@@ -317,9 +306,10 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         LENDING_POOL.accrueInterest(marketParams); // call
 
         Position memory position = LENDING_POOL.position(borrow.marketId, user);
+        bool usesShares = borrow.assetsAmount == type(uint256).max;
 
         // Determine the amount to repay. If max value, repay the full borrow balance
-        if (borrow.assetsAmount == type(uint256).max) {
+        if (usesShares) {
             Market memory market = LENDING_POOL.market(borrow.marketId);
             borrow.assetsAmount = uint256(position.borrowShares).toAssetsUp(
                 market.totalBorrowAssets,
@@ -332,9 +322,20 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
             address tokenIn = _decodeTokenIn(borrow.swapParams.path);
             address tokenOut = _decodeTokenOut(borrow.swapParams.path);
             // If the swap is from USDS to DAI, convert USDS to DAI
-            if (tokenIn == ConvertModule.USDS && tokenOut == ConvertModule.DAI) {
+            if (
+                tokenIn == ConvertModule.USDS &&
+                tokenOut == ConvertModule.DAI &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(borrow.assetsAmount);
+            } else if (
+                tokenIn == ConvertModule.DAI &&
+                tokenOut == ConvertModule.USDS &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
+                // Convert DAI to USDS for repayment
+                _convertDaiToUsds(borrow.assetsAmount);
             } else {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
@@ -351,8 +352,13 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
 
         IERC20(marketParams.loanToken).safeIncreaseAllowance(address(LENDING_POOL), borrow.assetsAmount);
 
-        LENDING_POOL.repay(marketParams, 0, position.borrowShares, user, new bytes(0));
-
+        LENDING_POOL.repay(
+            marketParams,
+            usesShares ? 0 : borrow.assetsAmount,
+            usesShares ? position.borrowShares : 0,
+            user,
+            new bytes(0)
+        );
         // Check if the debt for the collateral token has been successfully cleared
         if (IS_FULL_MIGRATION && !_isDebtCleared(borrow.marketId, user)) revert DebtNotCleared(marketParams.loanToken);
     }
@@ -434,13 +440,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
                     IComet(comet).supplyTo(user, tokenOut, amountOut);
                 }
             }
-            // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (collateralAsset == NATIVE_TOKEN) {
-            // Wrap the native token
-            WRAPPED_NATIVE_TOKEN.deposit{value: withdrawAmount}();
-            // Approve the wrapped native token to be spent by Comet
-            WRAPPED_NATIVE_TOKEN.approve(comet, withdrawAmount);
-            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), withdrawAmount);
             // If no swap is required, supply the collateral directly to Comet
         } else {
             IERC20(collateralAsset).safeIncreaseAllowance(comet, withdrawAmount);

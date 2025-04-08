@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {NegativeTesting} from "../NegativeTesting.sol";
 
 interface IERC20Mintable {
     function mint(address account, uint256 amount) external;
@@ -11,7 +12,7 @@ interface IERC20Burnable {
     function burn(address account, uint256 amount) external;
 }
 
-contract MockSparkPool {
+contract MockSparkPool is NegativeTesting {
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     mapping(address => IERC20) public spToken;
@@ -94,7 +95,17 @@ contract MockSparkPool {
     {
         IERC20 _spDebtToken = spDebtToken[asset];
 
-        return (0, _spDebtToken.balanceOf(user), _spDebtToken.balanceOf(user), 0, 0, 0, 0, 0, true);
+        return (
+            0,
+            (negativeTest == NegativeTest.DebtNotCleared ? 1 : _spDebtToken.balanceOf(user)),
+            (negativeTest == NegativeTest.DebtNotCleared ? 1 : _spDebtToken.balanceOf(user)),
+            0,
+            0,
+            0,
+            0,
+            0,
+            true
+        );
     }
 
     /**

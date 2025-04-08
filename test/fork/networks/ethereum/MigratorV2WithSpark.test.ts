@@ -10,7 +10,7 @@ import {
     setBalance,
     parseUnits,
     loadFixture,
-    log
+    logger
 } from "../../../helpers"; // Adjust the path as needed
 
 import {
@@ -89,7 +89,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
         const treasuryAddresses: Record<string, string> = {
             WBTC: "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c",
             DAI: "0xD1668fB5F690C59Ab4B0CAbAd0f8C1617895052B",
-            USDC: "0xC8e2C09A252ff6A41F82B4762bB282fD0CEA2280",
+            USDC: "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341",
             USDT: "0xF977814e90dA44bFA03b6295A0616a897441aceC",
             USDS: "0x1AB4973a48dc892Cd9971ECE8e01DcC7688f8F23",
             WETH: "0x8EB8a3b98659Cce290402893d0123abb75E3ab28",
@@ -183,7 +183,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             daiUsdsConverter: daiUsdsAddress,
             dai: tokenAddresses.DAI,
             usds: tokenAddresses.USDS,
-            wrappedNativeToken: tokenAddresses.WETH,
+            // wrappedNativeToken: tokenAddresses.WETH,
             sparkLendingPool: sparkContractAddresses.pool,
             sparkDataProvider: sparkContractAddresses.protocolDataProvider,
             isFullMigration: true
@@ -291,6 +291,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -371,7 +372,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -489,7 +490,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -532,6 +533,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -595,7 +597,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -665,7 +667,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.not.equal(Zero);
@@ -695,7 +697,9 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 migratorV2,
                 sparkPool,
                 wrappedTokenGateway,
-                cUSDCv3Contract
+                cUSDCv3Contract,
+                uniswapV3PathFinder,
+                uniswapContractAddresses
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
@@ -707,6 +711,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -736,7 +741,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             // total borrow amount equivalent to 200 USD
             const borrowAmounts = {
                 DAI: parseUnits("70", tokenDecimals.DAI),
-                ETH: parseEther("0.05") // ~130 USD
+                WETH: parseEther("0.05") // ~130 USD
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
@@ -766,7 +771,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 },
                 borrowAave: {
                     DAI: await debtTokenContracts.DAI.balanceOf(user.address),
-                    ETH: await debtTokenContracts.WETH.balanceOf(user.address)
+                    WETH: await debtTokenContracts.WETH.balanceOf(user.address)
                 },
                 collateralsComet: {
                     USDC: await cUSDCv3Contract.balanceOf(user.address),
@@ -774,7 +779,65 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = {
+                DAI_USDC: await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                    {
+                        tokenIn: tokenAddresses.USDC,
+                        tokenOut: tokenAddresses.DAI,
+                        connectors: [tokenAddresses.USDT, tokenAddresses.WETH],
+                        amountIn: Zero,
+                        amountOut: userBalancesBefore.borrowAave.DAI,
+                        excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                        maxGasEstimate: 500000
+                    },
+                    { gasLimit: 30000000 }
+                ),
+                WETH_USDC: await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                    {
+                        tokenIn: tokenAddresses.USDC,
+                        tokenOut: tokenAddresses.WETH,
+                        connectors: [tokenAddresses.USDT, tokenAddresses.DAI],
+                        amountIn: Zero,
+                        amountOut: userBalancesBefore.borrowAave.WETH,
+                        excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                        maxGasEstimate: 500000
+                    },
+                    { gasLimit: 30000000 }
+                )
+            };
+
+            logger("borrowSwapData:", borrowSwapData);
+
+            const collateralSwapData = {
+                cbBTC_USDC: await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                    {
+                        tokenIn: tokenAddresses.cbBTC,
+                        tokenOut: tokenAddresses.USDC,
+                        connectors: [tokenAddresses.USDT, tokenAddresses.WETH],
+                        amountIn: userBalancesBefore.collateralsAave.cbBTC,
+                        amountOut: Zero,
+                        excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                        maxGasEstimate: 500000
+                    },
+                    { gasLimit: 30000000 }
+                ),
+                USDT_USDC: await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                    {
+                        tokenIn: tokenAddresses.USDT,
+                        tokenOut: tokenAddresses.USDC,
+                        connectors: [tokenAddresses.cbBTC, tokenAddresses.WETH],
+                        amountIn: userBalancesBefore.collateralsAave.USDT,
+                        amountOut: Zero,
+                        excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                        maxGasEstimate: 500000
+                    },
+                    { gasLimit: 30000000 }
+                )
+            };
+
+            logger("collateralSwapData:", collateralSwapData);
 
             const position = {
                 borrows: [
@@ -782,24 +845,20 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
-                            amountInMaximum: parseUnits("70", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            path: borrowSwapData.DAI_USDC.path,
+                            amountInMaximum: borrowSwapData.DAI_USDC.estimatedAmount
+                                .mul(SLIPPAGE_BUFFER_PERCENT)
+                                .div(100)
                         }
                     },
                     {
                         debtToken: sparkContractAddresses.variableDebtToken.WETH,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
-                            amountInMaximum: parseUnits("130", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            path: borrowSwapData.WETH_USDC.path,
+                            amountInMaximum: borrowSwapData.WETH_USDC.estimatedAmount
+                                .mul(SLIPPAGE_BUFFER_PERCENT)
+                                .div(100)
                         }
                     }
                 ],
@@ -808,11 +867,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
+                            path: collateralSwapData.cbBTC_USDC.path,
                             amountOutMinimum: 0
                         }
                     },
@@ -820,11 +875,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         spToken: sparkContractAddresses.spToken.USDT,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.USDT, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
+                            path: collateralSwapData.USDT_USDC.path,
                             amountOutMinimum: 0
                         }
                     }
@@ -867,7 +918,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -905,6 +956,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -960,7 +1012,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1019,7 +1071,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -1055,6 +1107,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1110,7 +1163,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1173,7 +1226,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -1198,7 +1251,9 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 sparkAdapter,
                 migratorV2,
                 sparkPool,
-                cUSDCv3Contract
+                cUSDCv3Contract,
+                uniswapV3PathFinder,
+                uniswapContractAddresses
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
@@ -1209,6 +1264,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1266,7 +1322,22 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.USDC,
+                    tokenOut: tokenAddresses.DAI,
+                    connectors: [tokenAddresses.USDT, tokenAddresses.WETH],
+                    amountIn: Zero,
+                    amountOut: userBalancesBefore.borrowAave.DAI,
+                    excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            logger("borrowSwapData:", borrowSwapData);
 
             const position = {
                 borrows: [
@@ -1274,12 +1345,8 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
-                            amountInMaximum: parseUnits("70", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     },
                     {
@@ -1338,7 +1405,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -1364,7 +1431,9 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 sparkAdapter,
                 migratorV2,
                 sparkPool,
-                cUSDCv3Contract
+                cUSDCv3Contract,
+                uniswapContractAddresses,
+                uniswapV3PathFinder
             } = await loadFixture(setupEnv);
 
             // simulation of the vault contract work
@@ -1375,6 +1444,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1430,7 +1500,37 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
+
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.USDC,
+                    tokenOut: tokenAddresses.DAI,
+                    connectors: [tokenAddresses.USDT, tokenAddresses.WETH],
+                    amountIn: Zero,
+                    amountOut: userBalancesBefore.borrowAave.DAI,
+                    excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            logger("borrowSwapData:", borrowSwapData);
+
+            const collateralSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+                {
+                    tokenIn: tokenAddresses.cbBTC,
+                    tokenOut: tokenAddresses.USDC,
+                    connectors: [tokenAddresses.USDT, tokenAddresses.WETH],
+                    amountIn: userBalancesBefore.collateralAave.cbBTC,
+                    amountOut: Zero,
+                    excludedPool: uniswapContractAddresses.pools.USDC_USDT,
+                    maxGasEstimate: 500000
+                },
+                { gasLimit: 30000000 }
+            );
+
+            logger("collateralSwapData:", collateralSwapData);
 
             const position = {
                 borrows: [
@@ -1438,12 +1538,8 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         debtToken: sparkContractAddresses.variableDebtToken.DAI,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
-                            amountInMaximum: parseUnits("100", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                            path: borrowSwapData.path,
+                            amountInMaximum: borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
                 ],
@@ -1452,11 +1548,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         spToken: sparkContractAddresses.spToken.cbBTC,
                         amount: MaxUint256,
                         swapParams: {
-                            path: ethers.utils.concat([
-                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
-                                FEE_3000,
-                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
-                            ]),
+                            path: collateralSwapData.path,
                             amountOutMinimum: 0
                         }
                     }
@@ -1497,7 +1589,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -1533,6 +1625,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1588,7 +1681,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1651,7 +1744,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -1688,6 +1781,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1744,7 +1838,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1819,7 +1913,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -1855,6 +1949,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1899,7 +1994,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -1955,7 +2050,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
@@ -1990,6 +2085,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2033,7 +2129,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -2096,7 +2192,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralAave.cbBTC).to.be.equal(Zero);
@@ -2130,6 +2226,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2174,7 +2271,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -2240,7 +2337,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralAave.WBTC).to.be.equal(Zero);
@@ -2274,6 +2371,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2315,7 +2413,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -2364,7 +2462,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
@@ -2401,6 +2499,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2425,7 +2524,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             }
 
             const borrowAmounts = {
-                USDC: parseUnits("10.54", tokenDecimals.USDC)
+                USDC: parseUnits("5.54", tokenDecimals.USDC)
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
@@ -2462,7 +2561,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
                 {
@@ -2477,7 +2576,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 { gasLimit: 30000000 }
             );
 
-            console.log("borrowSwapData:", borrowSwapData);
+            logger("borrowSwapData:", borrowSwapData);
 
             const collateralSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
                 {
@@ -2492,7 +2591,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 { gasLimit: 30000000 }
             );
 
-            console.log("collateralSwapData:", collateralSwapData);
+            logger("collateralSwapData:", collateralSwapData);
 
             const position = {
                 borrows: [
@@ -2524,9 +2623,6 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             );
 
             const flashAmount = borrowSwapData.estimatedAmount.mul(SLIPPAGE_BUFFER_PERCENT).div(100);
-            // const flashAmount = borrowSwapData.estimatedAmount;
-
-            console.log("flashAmount:", flashAmount.toString());
 
             await expect(
                 migratorV2
@@ -2557,7 +2653,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -2593,12 +2689,14 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             // simulation of the vault contract work
             const fundingData = {
                 // wstETH: parseUnits("0.008", tokenDecimals.wstETH)
-                WETH: parseUnits("0.007", tokenDecimals.WETH)
+                WETH: parseUnits("0.008", tokenDecimals.WETH)
             };
+
             // --- start
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2619,18 +2717,14 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
 
             for (const [token, amount] of Object.entries(supplyAmounts)) {
                 await tokenContracts[token].approve(sparkPool.address, amount);
-                console.log("collateralTokenAddresses:", tokenAddresses[token]);
-                console.log("spTokenAddresses:", spTokenContracts[token].address);
                 await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
             }
 
             const borrowAmounts = {
-                USDC: parseUnits("10.54", tokenDecimals.USDC) // 10.538137 USD
+                USDC: parseUnits("10", tokenDecimals.USDC)
             };
 
             for (const [token, amount] of Object.entries(borrowAmounts)) {
-                console.log("\nborrowTokenAddresses:", tokenAddresses[token]);
-                console.log("debtTokenAddresses:", debtTokenContracts[token].address);
                 await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
             }
 
@@ -2664,14 +2758,14 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
-            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
-                // const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
+            // const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath(
+            const borrowSwapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath(
                 {
                     tokenIn: tokenAddresses.DAI,
                     tokenOut: tokenAddresses.USDC,
-                    // connectors: [tokenAddresses.USDT, tokenAddresses.wstETH, tokenAddresses.WETH],
+                    connectors: [tokenAddresses.USDT, tokenAddresses.wstETH, tokenAddresses.WETH],
                     amountIn: Zero,
                     amountOut: userBalancesBefore.borrowAave.USDC,
                     excludedPool: uniswapContractAddresses.pools.DAI_USDS,
@@ -2680,7 +2774,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 { gasLimit: 30000000 }
             );
 
-            console.log("borrowSwapData:", borrowSwapData);
+            logger("borrowSwapData:", borrowSwapData);
 
             const position = {
                 borrows: [
@@ -2748,7 +2842,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);

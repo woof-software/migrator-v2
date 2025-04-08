@@ -1,4 +1,15 @@
-import { loadFixture, ethers, expect, parseEther, Zero, AddressZero, BigNumber, HashZero } from "../helpers"; // Adjust the path as needed
+import {
+    loadFixture,
+    ethers,
+    expect,
+    parseEther,
+    Zero,
+    AddressZero,
+    BigNumber,
+    HashZero,
+    MaxUint256,
+    logger
+} from "../helpers"; // Adjust the path as needed
 
 import type {
     MigratorV2,
@@ -24,12 +35,17 @@ import type {
     UniswapV3PathFinder
 } from "../../typechain-types";
 import { token } from "../../typechain-types/@openzeppelin/contracts";
+import { mockUniswapV3PoolSol } from "../../typechain-types/contracts/mocks";
+import { morpho } from "../../typechain-types/contracts/interfaces";
 
 enum NEGATIVE_TEST {
     None,
     Reentrant,
     InvalidCallbackData,
-    FakeUniswapV3Pool
+    FakeUniswapV3Pool,
+    SwapRouterNotSupported,
+    DebtNotCleared,
+    InvalidPool
 }
 
 const NATIVE_TOKEN_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
@@ -55,7 +71,7 @@ const POSITION_MORPHO_ABI = [
     "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
 ];
 
-describe("MigratorV2AndAaveV3", function () {
+describe("MigratorV2", function () {
     // Setup Mocks: deploy all necessary mock contracts
     async function setupMocks() {
         const [deployer] = await ethers.getSigners();
@@ -90,8 +106,11 @@ describe("MigratorV2AndAaveV3", function () {
 
         // Deploy mock Comet
         const MockComet = await ethers.getContractFactory("MockComet");
-        const mockComet = await MockComet.deploy(mockUSDS.address, mockWETH.address);
-        await mockComet.deployed();
+        const mockCometUsds = await MockComet.deploy(mockUSDS.address, mockWETH.address);
+        await mockCometUsds.deployed();
+
+        const mockCometUsdt = await MockComet.deploy(mockUSDT.address, mockWETH.address);
+        await mockCometUsdt.deployed();
 
         // Deploy mock Aave Lending Pool with mock AToken and mock Debt Token
         // Deploy mock Aave aToken
@@ -137,6 +156,13 @@ describe("MigratorV2AndAaveV3", function () {
             tokenContracts.DAI.address,
             mockADebtTokenUSDT.address,
             tokenContracts.USDT.address
+        );
+
+        await mockAavePool.setPoll(
+            mockATokenUSDT.address,
+            tokenContracts.USDT.address,
+            mockADebtTokenUSDS.address,
+            tokenContracts.USDS.address
         );
 
         // const mockAavePoolDaiUsdt = await MockAaveLendingPool.deploy(
@@ -224,6 +250,20 @@ describe("MigratorV2AndAaveV3", function () {
         await mockSparkPool.deployed();
 
         await mockSparkPool.setPoll(
+            mockSpTokenWETH.address,
+            tokenContracts.WETH.address,
+            mockSpDebtTokenUSDT.address,
+            tokenContracts.USDT.address
+        );
+
+        await mockSparkPool.setPoll(
+            mockSpTokenWETH.address,
+            tokenContracts.WETH.address,
+            mockSpDebtTokenUSDS.address,
+            tokenContracts.USDS.address
+        );
+
+        await mockSparkPool.setPoll(
             mockSpTokenDAI.address,
             tokenContracts.DAI.address,
             mockSpDebtTokenUSDS.address,
@@ -289,17 +329,26 @@ describe("MigratorV2AndAaveV3", function () {
                 oracle: ethers.constants.AddressZero,
                 irm: ethers.constants.AddressZero,
                 lltv: 7500
+            },
+            USDS_WETH: {
+                loanToken: mockUSDS.address,
+                collateralToken: mockWETH.address,
+                oracle: ethers.constants.AddressZero,
+                irm: ethers.constants.AddressZero,
+                lltv: 7500
             }
         };
 
         await mockMorpho.setMarketParams(morphoMarketParams.DAI_USDS);
         await mockMorpho.setMarketParams(morphoMarketParams.USDT_DAI);
         await mockMorpho.setMarketParams(morphoMarketParams.USDT_WETH);
+        await mockMorpho.setMarketParams(morphoMarketParams.USDS_WETH);
         // Define market parameters for Morpho
         const morphoMarketIds = {
             DAI_USDS: await mockMorpho.getMarketId(morphoMarketParams.DAI_USDS),
             USDT_DAI: await mockMorpho.getMarketId(morphoMarketParams.USDT_DAI),
-            USDT_WETH: await mockMorpho.getMarketId(morphoMarketParams.USDT_WETH)
+            USDT_WETH: await mockMorpho.getMarketId(morphoMarketParams.USDT_WETH),
+            USDS_WETH: await mockMorpho.getMarketId(morphoMarketParams.USDS_WETH)
         };
 
         // Fake Uniswap V3 Pool
@@ -314,10 +363,14 @@ describe("MigratorV2AndAaveV3", function () {
 
         // Deploy mock Uniswap V3 Pool for flash loans
         const MockUniswapV3Pool = await ethers.getContractFactory("MockUniswapV3Pool");
-        const mockUniswapV3Pool = await MockUniswapV3Pool.deploy(mockUSDS.address, mockDAI.address);
-        await mockUniswapV3Pool.deployed();
+        const uniswapV3PoolUsdsDai = await MockUniswapV3Pool.deploy(mockUSDS.address, mockDAI.address);
+        await uniswapV3PoolUsdsDai.deployed();
 
-        await mockUniswapV3Pool.setFakeUniswapV3Pool(fakeUniswapV3Pool.address);
+        await uniswapV3PoolUsdsDai.setFakeUniswapV3Pool(fakeUniswapV3Pool.address);
+
+        const uniswapV3PoolUsdtWeth = await MockUniswapV3Pool.deploy(mockUSDT.address, mockWETH.address);
+
+        await uniswapV3PoolUsdtWeth.setFakeUniswapV3Pool(fakeUniswapV3Pool.address);
 
         // Deploy mock Swap Router
         const MockSwapRouter = await ethers.getContractFactory("MockSwapRouter");
@@ -334,21 +387,27 @@ describe("MigratorV2AndAaveV3", function () {
             value: parseEther("2000")
         });
         // Fund Uniswap V3 Pool
-        await mockDAI.transfer(mockUniswapV3Pool.address, parseEther("2000"));
-        await mockUSDS.transfer(mockUniswapV3Pool.address, parseEther("2000"));
-        await mockWETH.transfer(mockUniswapV3Pool.address, parseEther("2000"));
-        await deployer.sendTransaction({
-            to: mockUniswapV3Pool.address,
-            value: parseEther("2000")
-        });
+        await mockDAI.transfer(uniswapV3PoolUsdsDai.address, parseEther("2000"));
+        await mockUSDS.transfer(uniswapV3PoolUsdsDai.address, parseEther("2000"));
+        // await mockWETH.transfer(uniswapV3PoolUsdsDai.address, parseEther("2000"));
+        // await deployer.sendTransaction({
+        //     to: uniswapV3PoolUsdsDai.address,
+        //     value: parseEther("2000")
+        // });
+
+        await mockUSDT.transfer(uniswapV3PoolUsdtWeth.address, parseEther("2000"));
+        await mockWETH.transfer(uniswapV3PoolUsdtWeth.address, parseEther("2000"));
         // Fund Aave Lending Pool
         await mockWETH.transfer(aaveContract.lendingPools.address, parseEther("2000"));
         await mockDAI.transfer(aaveContract.lendingPools.address, parseEther("2000"));
         await mockUSDT.transfer(aaveContract.lendingPools.address, parseEther("2000"));
+        await mockUSDS.transfer(aaveContract.lendingPools.address, parseEther("2000"));
 
         // Fund Spark Lending Pool
         await mockWETH.transfer(sparkContract.lendingPools.address, parseEther("2000"));
         await mockDAI.transfer(sparkContract.lendingPools.address, parseEther("2000"));
+        await mockUSDT.transfer(sparkContract.lendingPools.address, parseEther("2000"));
+        await mockUSDS.transfer(sparkContract.lendingPools.address, parseEther("2000"));
         // await deployer.sendTransaction({
         //     to: mockSparkPool.address,
         //     value: parseEther("2000")
@@ -357,7 +416,8 @@ describe("MigratorV2AndAaveV3", function () {
         await mockDAI.transfer(mockDaiUsds.address, parseEther("2000"));
         await mockUSDS.transfer(mockDaiUsds.address, parseEther("2000"));
         // Fund Comet
-        await mockUSDS.transfer(mockComet.address, parseEther("2000"));
+        await mockUSDS.transfer(mockCometUsds.address, parseEther("2000"));
+        await mockUSDT.transfer(mockCometUsdt.address, parseEther("2000"));
         // Fund Morpho
         await mockDAI.transfer(mockMorpho.address, parseEther("2000"));
         await mockUSDS.transfer(mockMorpho.address, parseEther("2000"));
@@ -370,6 +430,7 @@ describe("MigratorV2AndAaveV3", function () {
             mockDAI,
             mockUSDS,
             mockWETH,
+            mockUSDT,
             // Aave
             aaveContract,
             // Spark
@@ -380,8 +441,10 @@ describe("MigratorV2AndAaveV3", function () {
             // other
             tokenContracts,
             mockDaiUsds,
-            mockComet,
-            mockUniswapV3Pool,
+            mockCometUsds,
+            mockCometUsdt,
+            uniswapV3PoolUsdsDai,
+            uniswapV3PoolUsdtWeth,
             mockSwapRouter,
             mockMorpho,
             mockQuoterV2
@@ -400,9 +463,8 @@ describe("MigratorV2AndAaveV3", function () {
             daiUsdsConverter: mocks.mockDaiUsds.address,
             dai: mocks.mockDAI.address,
             usds: mocks.mockUSDS.address,
-            wrappedNativeToken: mocks.mockWETH.address,
             aaveLendingPool: mocks.aaveContract.lendingPools.address,
-            aaveDataProvider: mocks.aaveContract.lendingPools.address, // TODO: change to mockAaveDataProvider
+            aaveDataProvider: mocks.aaveContract.lendingPools.address,
             isFullMigration: true
         })) as AaveV3UsdsAdapter;
         await aaveV3UsdsAdapter.deployed();
@@ -411,9 +473,8 @@ describe("MigratorV2AndAaveV3", function () {
         const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", adapterDeployer);
         const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
             uniswapRouter: mocks.mockSwapRouter.address,
-            wrappedNativeToken: mocks.mockWETH.address,
             aaveLendingPool: mocks.aaveContract.lendingPools.address,
-            aaveDataProvider: mocks.aaveContract.lendingPools.address, // TODO: change to mockAaveDataProvider
+            aaveDataProvider: mocks.aaveContract.lendingPools.address,
             isFullMigration: true
         })) as AaveV3Adapter;
         await aaveV3Adapter.deployed();
@@ -425,9 +486,8 @@ describe("MigratorV2AndAaveV3", function () {
             daiUsdsConverter: mocks.mockDaiUsds.address,
             dai: mocks.mockDAI.address,
             usds: mocks.mockUSDS.address,
-            wrappedNativeToken: mocks.mockWETH.address,
             sparkLendingPool: mocks.sparkContract.lendingPools.address,
-            sparkDataProvider: mocks.sparkContract.lendingPools.address, // TODO: change to mockSparkDataProvider
+            sparkDataProvider: mocks.sparkContract.lendingPools.address,
             isFullMigration: true
         })) as SparkUsdsAdapter;
         await sparkUsdsAdapter.deployed();
@@ -436,9 +496,8 @@ describe("MigratorV2AndAaveV3", function () {
         const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", adapterDeployer);
         const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy({
             uniswapRouter: mocks.mockSwapRouter.address,
-            wrappedNativeToken: mocks.mockWETH.address,
             sparkLendingPool: mocks.sparkContract.lendingPools.address,
-            sparkDataProvider: mocks.sparkContract.lendingPools.address, // TODO: change to mockSparkDataProvider
+            sparkDataProvider: mocks.sparkContract.lendingPools.address,
             isFullMigration: true
         })) as SparkAdapter;
         await sparkAdapter.deployed();
@@ -450,7 +509,6 @@ describe("MigratorV2AndAaveV3", function () {
             daiUsdsConverter: mocks.mockDaiUsds.address,
             dai: mocks.mockDAI.address,
             usds: mocks.mockUSDS.address,
-            wrappedNativeToken: mocks.mockWETH.address,
             morphoLendingPool: mocks.mockMorpho.address,
             isFullMigration: true
         })) as MorphoUsdsAdapter;
@@ -460,7 +518,6 @@ describe("MigratorV2AndAaveV3", function () {
         const MorphoAdapterFactory = await ethers.getContractFactory("MorphoAdapter", adapterDeployer);
         const morphoAdapter = (await MorphoAdapterFactory.connect(owner).deploy({
             uniswapRouter: mocks.mockSwapRouter.address,
-            wrappedNativeToken: mocks.mockWETH.address,
             morphoLendingPool: mocks.mockMorpho.address,
             isFullMigration: true
         })) as MorphoAdapter;
@@ -474,13 +531,20 @@ describe("MigratorV2AndAaveV3", function () {
             sparkAdapter.address,
             morphoAdapter.address
         ];
-        const comets = [mocks.mockComet.address];
+        const comets = [mocks.mockCometUsds.address, mocks.mockCometUsdt.address];
 
         // Set up flashData for migrator
         const flashData = [
             {
-                liquidityPool: mocks.mockUniswapV3Pool.address,
-                baseToken: mocks.mockUSDS.address,
+                liquidityPool: mocks.uniswapV3PoolUsdsDai.address,
+                // baseToken: mocks.mockUSDS.address,
+                // isToken0: true
+                baseToken: mocks.mockDAI.address,
+                isToken0: false
+            },
+            {
+                liquidityPool: mocks.uniswapV3PoolUsdtWeth.address,
+                baseToken: mocks.mockUSDT.address,
                 isToken0: true
             }
         ];
@@ -539,8 +603,29 @@ describe("MigratorV2AndAaveV3", function () {
                 expect(await aaveV3UsdsAdapter.DAI_USDS_CONVERTER()).to.equal(mocks.mockDaiUsds.address);
                 expect(await aaveV3UsdsAdapter.DAI()).to.equal(mocks.mockDAI.address);
                 expect(await aaveV3UsdsAdapter.USDS()).to.equal(mocks.mockUSDS.address);
-                expect(await aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN()).to.equal(mocks.mockWETH.address);
                 expect(await aaveV3UsdsAdapter.LENDING_POOL()).to.equal(mocks.aaveContract.lendingPools.address);
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, aaveV3Adapter } = await loadFixture(setupTestEnvironment);
+                const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", adapterDeployer);
+                await expect(
+                    AaveV3AdapterFactory.deploy({
+                        uniswapRouter: AddressZero, ///< Invalid address
+                        aaveLendingPool: mocks.aaveContract.lendingPools.address,
+                        aaveDataProvider: mocks.aaveContract.lendingPools.address,
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(aaveV3Adapter, "InvalidZeroAddress");
+
+                await expect(
+                    AaveV3AdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        aaveLendingPool: mocks.aaveContract.lendingPools.address,
+                        aaveDataProvider: AddressZero, ///< Invalid address
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(aaveV3Adapter, "InvalidZeroAddress");
             });
         });
 
@@ -559,7 +644,6 @@ describe("MigratorV2AndAaveV3", function () {
                         daiUsdsConverter: mocks.mockDaiUsds.address,
                         dai: mocks.mockDAI.address,
                         usds: mocks.mockUSDS.address,
-                        wrappedNativeToken: mocks.mockWETH.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
                         isFullMigration: false
@@ -572,19 +656,18 @@ describe("MigratorV2AndAaveV3", function () {
                         daiUsdsConverter: AddressZero, ///< Invalid address
                         dai: mocks.mockDAI.address,
                         usds: mocks.mockUSDS.address,
-                        wrappedNativeToken: mocks.mockWETH.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
                         isFullMigration: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
+
                 await expect(
                     AaveV3UsdsAdapterFactory.deploy({
                         uniswapRouter: mocks.mockSwapRouter.address,
                         daiUsdsConverter: mocks.mockDaiUsds.address,
                         dai: AddressZero, ///< Invalid address
                         usds: mocks.mockUSDS.address,
-                        wrappedNativeToken: mocks.mockWETH.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
                         isFullMigration: false
@@ -597,7 +680,6 @@ describe("MigratorV2AndAaveV3", function () {
                         daiUsdsConverter: mocks.mockDaiUsds.address,
                         dai: mocks.mockDAI.address,
                         usds: AddressZero, ///< Invalid address,
-                        wrappedNativeToken: mocks.mockWETH.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
                         isFullMigration: false
@@ -610,20 +692,6 @@ describe("MigratorV2AndAaveV3", function () {
                         daiUsdsConverter: mocks.mockDaiUsds.address,
                         dai: mocks.mockDAI.address,
                         usds: mocks.mockUSDS.address,
-                        wrappedNativeToken: AddressZero, ///< Invalid address
-                        aaveLendingPool: mocks.aaveContract.lendingPools.address,
-                        aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
-                    })
-                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
-
-                await expect(
-                    AaveV3UsdsAdapterFactory.deploy({
-                        uniswapRouter: mocks.mockSwapRouter.address,
-                        daiUsdsConverter: mocks.mockDaiUsds.address,
-                        dai: mocks.mockDAI.address,
-                        usds: mocks.mockUSDS.address,
-                        wrappedNativeToken: mocks.mockWETH.address,
                         aaveLendingPool: AddressZero, ///< Invalid address
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
                         isFullMigration: false
@@ -636,9 +704,36 @@ describe("MigratorV2AndAaveV3", function () {
                         daiUsdsConverter: mocks.mockDaiUsds.address,
                         dai: mocks.mockDAI.address,
                         usds: mocks.mockUSDS.address,
-                        wrappedNativeToken: mocks.mockWETH.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: AddressZero, ///< Invalid address,
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
+                const AaveV3UsdsAdapterFactory = await ethers.getContractFactory("AaveV3UsdsAdapter", adapterDeployer);
+                await expect(
+                    AaveV3UsdsAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        daiUsdsConverter: mocks.mockDaiUsds.address,
+                        dai: mocks.mockDAI.address,
+                        usds: mocks.mockUSDS.address,
+                        aaveLendingPool: AddressZero, ///< Invalid address
+                        aaveDataProvider: mocks.aaveContract.lendingPools.address,
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
+
+                await expect(
+                    AaveV3UsdsAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        daiUsdsConverter: mocks.mockDaiUsds.address,
+                        dai: mocks.mockDAI.address,
+                        usds: mocks.mockUSDS.address,
+                        aaveLendingPool: mocks.aaveContract.lendingPools.address,
+                        aaveDataProvider: AddressZero, ///< Invalid address
                         isFullMigration: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
@@ -647,6 +742,41 @@ describe("MigratorV2AndAaveV3", function () {
 
         context("* SparkAdapter", async () => {
             it("Should deploy SparkAdapter to a proper address", async () => {
+                const { sparkAdapter } = await loadFixture(setupTestEnvironment);
+                expect(sparkAdapter.address).to.be.properAddress;
+            });
+
+            it("Should have correct dependencies", async () => {
+                const { sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                expect(await sparkAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await sparkAdapter.LENDING_POOL()).to.equal(mocks.sparkContract.lendingPools.address);
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, sparkAdapter } = await loadFixture(setupTestEnvironment);
+                const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", adapterDeployer);
+                await expect(
+                    SparkAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        sparkLendingPool: AddressZero, ///< Invalid address
+                        sparkDataProvider: mocks.sparkContract.lendingPools.address,
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(sparkAdapter, "InvalidZeroAddress");
+
+                await expect(
+                    SparkAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        sparkLendingPool: mocks.sparkContract.lendingPools.address,
+                        sparkDataProvider: AddressZero, ///< Invalid address
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(sparkAdapter, "InvalidZeroAddress");
+            });
+        });
+
+        context("* SparkUsdsAdapter", async () => {
+            it("Should deploy SparkUsdsAdapter to a proper address", async () => {
                 const { sparkUsdsAdapter } = await loadFixture(setupTestEnvironment);
                 expect(sparkUsdsAdapter.address).to.be.properAddress;
             });
@@ -657,8 +787,91 @@ describe("MigratorV2AndAaveV3", function () {
                 expect(await sparkUsdsAdapter.DAI_USDS_CONVERTER()).to.equal(mocks.mockDaiUsds.address);
                 expect(await sparkUsdsAdapter.DAI()).to.equal(mocks.mockDAI.address);
                 expect(await sparkUsdsAdapter.USDS()).to.equal(mocks.mockUSDS.address);
-                expect(await sparkUsdsAdapter.WRAPPED_NATIVE_TOKEN()).to.equal(mocks.mockWETH.address);
                 expect(await sparkUsdsAdapter.LENDING_POOL()).to.equal(mocks.sparkContract.lendingPools.address);
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, sparkUsdsAdapter } = await loadFixture(setupTestEnvironment);
+                const SparkUsdsAdapterFactory = await ethers.getContractFactory("SparkUsdsAdapter", adapterDeployer);
+                await expect(
+                    SparkUsdsAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        daiUsdsConverter: mocks.mockDaiUsds.address,
+                        dai: mocks.mockDAI.address,
+                        usds: mocks.mockUSDS.address,
+                        sparkLendingPool: AddressZero, ///< Invalid address
+                        sparkDataProvider: mocks.sparkContract.lendingPools.address,
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(sparkUsdsAdapter, "InvalidZeroAddress");
+
+                await expect(
+                    SparkUsdsAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        daiUsdsConverter: mocks.mockDaiUsds.address,
+                        dai: mocks.mockDAI.address,
+                        usds: mocks.mockUSDS.address,
+                        sparkLendingPool: mocks.sparkContract.lendingPools.address,
+                        sparkDataProvider: AddressZero, ///< Invalid address
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(sparkUsdsAdapter, "InvalidZeroAddress");
+            });
+        });
+
+        context("* MorphoAdapter", async () => {
+            it("Should deploy MorphoAdapter to a proper address", async () => {
+                const { morphoAdapter } = await loadFixture(setupTestEnvironment);
+                expect(morphoAdapter.address).to.be.properAddress;
+            });
+
+            it("Should have correct dependencies", async () => {
+                const { morphoAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                expect(await morphoAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await morphoAdapter.LENDING_POOL()).to.equal(mocks.mockMorpho.address);
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, morphoAdapter } = await loadFixture(setupTestEnvironment);
+                const MorphoAdapterFactory = await ethers.getContractFactory("MorphoAdapter", adapterDeployer);
+                await expect(
+                    MorphoAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        morphoLendingPool: AddressZero, ///< Invalid address
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(morphoAdapter, "InvalidZeroAddress");
+            });
+        });
+
+        context("* MorphoUsdsAdapter", async () => {
+            it("Should deploy MorphoUsdsAdapter to a proper address", async () => {
+                const { morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
+                expect(morphoUsdsAdapter.address).to.be.properAddress;
+            });
+
+            it("Should have correct dependencies", async () => {
+                const { morphoUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                expect(await morphoUsdsAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await morphoUsdsAdapter.DAI_USDS_CONVERTER()).to.equal(mocks.mockDaiUsds.address);
+                expect(await morphoUsdsAdapter.DAI()).to.equal(mocks.mockDAI.address);
+                expect(await morphoUsdsAdapter.USDS()).to.equal(mocks.mockUSDS.address);
+                expect(await morphoUsdsAdapter.LENDING_POOL()).to.equal(mocks.mockMorpho.address);
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
+                const MorphoUsdsAdapterFactory = await ethers.getContractFactory("MorphoUsdsAdapter", adapterDeployer);
+                await expect(
+                    MorphoUsdsAdapterFactory.deploy({
+                        uniswapRouter: mocks.mockSwapRouter.address,
+                        daiUsdsConverter: mocks.mockDaiUsds.address,
+                        dai: mocks.mockDAI.address,
+                        usds: mocks.mockUSDS.address,
+                        morphoLendingPool: AddressZero, ///< Invalid address
+                        isFullMigration: false
+                    })
+                ).to.be.revertedWithCustomError(morphoUsdsAdapter, "InvalidZeroAddress");
             });
         });
 
@@ -679,6 +892,15 @@ describe("MigratorV2AndAaveV3", function () {
                 expect(adapters).to.include(aaveV3UsdsAdapter.address);
                 expect(adapters).to.include(sparkUsdsAdapter.address);
             });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, migrator } = await loadFixture(setupTestEnvironment);
+                const MigratorV2Factory = await ethers.getContractFactory("MigratorV2", adapterDeployer);
+
+                await expect(
+                    MigratorV2Factory.deploy(mocks.mockSwapRouter.address, [], [mocks.mockCometUsdt.address], [])
+                ).to.be.revertedWithCustomError(migrator, "MismatchedArrayLengths");
+            });
         });
     });
 
@@ -687,6 +909,56 @@ describe("MigratorV2AndAaveV3", function () {
             it("Should deploy UniswapV3PathFinder to a proper address", async () => {
                 const { uniswapV3PathFinder } = await loadFixture(setupTestEnvironment);
                 expect(uniswapV3PathFinder.address).to.be.properAddress;
+            });
+
+            it("Should have correct dependencies", async () => {
+                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+                expect(await uniswapV3PathFinder.QUOTER_V2()).to.equal(mocks.mockQuoterV2.address);
+                expect(await uniswapV3PathFinder.DAI()).to.equal(mocks.tokenContracts.DAI.address);
+                expect(await uniswapV3PathFinder.USDS()).to.equal(mocks.tokenContracts.USDS.address);
+            });
+
+            it("Should revert if invalid constructor parameters", async () => {
+                const { mocks, adapterDeployer, uniswapV3PathFinder } = await loadFixture(setupTestEnvironment);
+                const UniswapV3PathFinderFactory = await ethers.getContractFactory(
+                    "UniswapV3PathFinder",
+                    adapterDeployer
+                );
+                await expect(
+                    UniswapV3PathFinderFactory.deploy(
+                        AddressZero,
+                        mocks.mockQuoterV2.address,
+                        mocks.tokenContracts.DAI.address,
+                        mocks.tokenContracts.USDS.address
+                    )
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidZeroAddress");
+
+                await expect(
+                    UniswapV3PathFinderFactory.deploy(
+                        mocks.mockQuoterV2.address,
+                        AddressZero,
+                        mocks.tokenContracts.DAI.address,
+                        mocks.tokenContracts.USDS.address
+                    )
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidZeroAddress");
+
+                await expect(
+                    UniswapV3PathFinderFactory.deploy(
+                        mocks.mockQuoterV2.address,
+                        mocks.mockQuoterV2.address,
+                        AddressZero,
+                        mocks.tokenContracts.USDS.address
+                    )
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidConfiguration");
+
+                await expect(
+                    UniswapV3PathFinderFactory.deploy(
+                        mocks.mockQuoterV2.address,
+                        mocks.mockQuoterV2.address,
+                        mocks.tokenContracts.DAI.address,
+                        AddressZero
+                    )
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidConfiguration");
             });
         });
 
@@ -713,11 +985,11 @@ describe("MigratorV2AndAaveV3", function () {
             it("Should return correct amount | single swap path | convert DAI to USDS", async () => {
                 const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
 
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
+                let amountIn = parseEther("200");
+                let amountOut = Zero;
                 const maxGasEstimate = 1000000n;
 
-                const swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
+                let swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
                     tokenIn: mocks.tokenContracts.DAI.address,
                     tokenOut: mocks.tokenContracts.USDS.address,
                     amountIn,
@@ -727,16 +999,17 @@ describe("MigratorV2AndAaveV3", function () {
                 });
 
                 expect(swapData.estimatedAmount).to.deep.equal(amountIn);
-            });
+                expect(swapData.path).to.deep.equal(
+                    ethers.utils.hexConcat([
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                    ])
+                );
 
-            it("Should return correct amount | single swap path | convert USDS to DAI", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+                amountIn = Zero;
+                amountOut = parseEther("200");
 
-                const amountIn = Zero;
-                const amountOut = parseEther("300");
-                const maxGasEstimate = 1000000n;
-
-                const swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
+                swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
                     tokenIn: mocks.tokenContracts.DAI.address,
                     tokenOut: mocks.tokenContracts.USDS.address,
                     amountIn,
@@ -746,6 +1019,57 @@ describe("MigratorV2AndAaveV3", function () {
                 });
 
                 expect(swapData.estimatedAmount).to.deep.equal(amountOut);
+                expect(swapData.path).to.deep.equal(
+                    ethers.utils.hexConcat([
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                    ])
+                );
+            });
+
+            it("Should return correct amount | single swap path | convert USDS to DAI", async () => {
+                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+
+                let amountIn = Zero;
+                let amountOut = parseEther("300");
+                const maxGasEstimate = 1000000n;
+
+                let swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
+                    tokenIn: mocks.tokenContracts.USDS.address,
+                    tokenOut: mocks.tokenContracts.DAI.address,
+                    amountIn,
+                    amountOut,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                });
+
+                expect(swapData.estimatedAmount).to.deep.equal(amountOut);
+                expect(swapData.path).to.deep.equal(
+                    ethers.utils.hexConcat([
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
+                    ])
+                );
+
+                amountIn = parseEther("300");
+                amountOut = Zero;
+
+                swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
+                    tokenIn: mocks.tokenContracts.USDS.address,
+                    tokenOut: mocks.tokenContracts.DAI.address,
+                    amountIn,
+                    amountOut,
+                    excludedPool: AddressZero,
+                    maxGasEstimate
+                });
+
+                expect(swapData.estimatedAmount).to.deep.equal(amountIn);
+                expect(swapData.path).to.deep.equal(
+                    ethers.utils.hexConcat([
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
+                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
+                    ])
+                );
             });
 
             it("Should return correct amount | single swap path | quoteExactOutput", async () => {
@@ -807,15 +1131,234 @@ describe("MigratorV2AndAaveV3", function () {
                 expect(swapData.estimatedAmount).to.deep.equal(amountOut.mul(95).div(100));
             });
         });
+        context("* Testing negative scenarios", async () => {
+            it("Should revert if invalid pool | single path", async () => {
+                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+                const { mockQuoterV2 } = mocks;
+                const amountIn = parseEther("200");
+                const amountOut = Zero;
+                const maxGasEstimate = 1000000n;
+
+                await mockQuoterV2.setNegativeTest(NEGATIVE_TEST.InvalidPool);
+
+                await expect(
+                    uniswapV3PathFinder.getBestSingleSwapPath({
+                        tokenIn: mocks.tokenContracts.USDT.address,
+                        tokenOut: mocks.tokenContracts.USDS.address,
+                        amountIn,
+                        amountOut,
+                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
+                        maxGasEstimate
+                    })
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
+            });
+
+            it("Should revert if invalid pool | multi path", async () => {
+                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+                const { mockQuoterV2 } = mocks;
+                const amountIn = parseEther("200");
+                const amountOut = Zero;
+                const maxGasEstimate = 1000000n;
+
+                await mockQuoterV2.setNegativeTest(NEGATIVE_TEST.InvalidPool);
+
+                await expect(
+                    uniswapV3PathFinder.getBestMultiSwapPath({
+                        tokenIn: mocks.tokenContracts.USDT.address,
+                        tokenOut: mocks.tokenContracts.USDS.address,
+                        connectors: [mocks.tokenContracts.WETH.address],
+                        amountIn,
+                        amountOut,
+                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
+                        maxGasEstimate
+                    })
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
+            });
+
+            it("Should revert if don't have connector | multi path", async () => {
+                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+                const amountIn = parseEther("200");
+                const amountOut = Zero;
+                const maxGasEstimate = 1000000n;
+
+                await expect(
+                    uniswapV3PathFinder.getBestMultiSwapPath({
+                        tokenIn: mocks.tokenContracts.USDT.address,
+                        tokenOut: mocks.tokenContracts.USDS.address,
+                        connectors: [],
+                        amountIn,
+                        amountOut,
+                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
+                        maxGasEstimate
+                    })
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "MustBeAtLeastOneConnector");
+            });
+
+            it("Should revert if connector == tokenIn or tokenOut | multi path", async () => {
+                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
+                const amountIn = parseEther("200");
+                const amountOut = Zero;
+                const maxGasEstimate = 1000000n;
+
+                await expect(
+                    uniswapV3PathFinder.getBestMultiSwapPath({
+                        tokenIn: mocks.tokenContracts.USDT.address,
+                        tokenOut: mocks.tokenContracts.USDS.address,
+                        connectors: [mocks.tokenContracts.USDT.address],
+                        amountIn,
+                        amountOut,
+                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
+                        maxGasEstimate
+                    })
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
+
+                await expect(
+                    uniswapV3PathFinder.getBestMultiSwapPath({
+                        tokenIn: mocks.tokenContracts.USDT.address,
+                        tokenOut: mocks.tokenContracts.USDS.address,
+                        connectors: [mocks.tokenContracts.USDS.address],
+                        amountIn,
+                        amountOut,
+                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
+                        maxGasEstimate
+                    })
+                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
+            });
+        });
     });
 
     describe("# Migrate functionality", function () {
-        context("* Testing negative scenarios for the main contract: MigratorV2", async () => {
+        context("* Testing negative scenarios", async () => {
+            it("Should revert if migrator is paused", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks, owner } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - USDS
+                const borrowAmounts = {
+                    USDS: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: mocks.aaveContract.debtTokens.USDS.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                // Pause the migrator
+                await migrator.connect(owner).pause();
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(migrator, "EnforcedPause");
+            });
+
             it("Should revert if fake pool", async () => {
                 const { migrator, user, aaveV3UsdsAdapter, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockComet, mockUniswapV3Pool } = mocks;
+                const { mockCometUsds, uniswapV3PoolUsdsDai } = mocks;
 
-                await mockUniswapV3Pool.setNegativeTest(NEGATIVE_TEST.FakeUniswapV3Pool);
+                await uniswapV3PoolUsdsDai.setNegativeTest(NEGATIVE_TEST.FakeUniswapV3Pool);
 
                 // Testing without setup the required data and conditions
                 const position = {
@@ -860,15 +1403,15 @@ describe("MigratorV2AndAaveV3", function () {
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWithCustomError(migrator, "SenderNotUniswapPool");
             });
 
             it("Should revert if invalid callback data", async () => {
                 const { migrator, user, aaveV3UsdsAdapter, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockComet, mockUniswapV3Pool } = mocks;
+                const { mockCometUsds, uniswapV3PoolUsdsDai } = mocks;
 
-                await mockUniswapV3Pool.setNegativeTest(NEGATIVE_TEST.InvalidCallbackData);
+                await uniswapV3PoolUsdsDai.setNegativeTest(NEGATIVE_TEST.InvalidCallbackData);
 
                 // Testing without setup the required data and conditions
                 const position = {
@@ -913,15 +1456,15 @@ describe("MigratorV2AndAaveV3", function () {
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWithCustomError(migrator, "InvalidCallbackHash");
             });
 
             it("Should revert if reentrancy is detected", async () => {
                 const { migrator, user, aaveV3UsdsAdapter, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockComet, mockUniswapV3Pool } = mocks;
+                const { mockCometUsds, uniswapV3PoolUsdsDai } = mocks;
 
-                await mockUniswapV3Pool.setNegativeTest(NEGATIVE_TEST.Reentrant);
+                await uniswapV3PoolUsdsDai.setNegativeTest(NEGATIVE_TEST.Reentrant);
 
                 // Testing without setup the required data and conditions
                 const position = {
@@ -966,14 +1509,14 @@ describe("MigratorV2AndAaveV3", function () {
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWithCustomError(migrator, "ReentrancyGuardReentrantCall");
             });
 
             it("Should revert if invalid adapter is used", async () => {
                 const { migrator, user, mocks } = await loadFixture(setupTestEnvironment);
                 await expect(
-                    migrator.connect(user).migrate(AddressZero, mocks.mockComet.address, "0x", parseEther("100"))
+                    migrator.connect(user).migrate(AddressZero, mocks.mockCometUsds.address, "0x", parseEther("100"))
                 ).to.be.revertedWithCustomError(migrator, "InvalidAdapter");
             });
 
@@ -982,7 +1525,7 @@ describe("MigratorV2AndAaveV3", function () {
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, "0x", parseEther("100"))
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, "0x", parseEther("100"))
                 ).to.be.revertedWithCustomError(migrator, "InvalidMigrationData");
             });
 
@@ -1064,11 +1607,11 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = Zero;
 
@@ -1077,7 +1620,7 @@ describe("MigratorV2AndAaveV3", function () {
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ConversionFailed");
 
                 const userBalancesAfter = {
@@ -1085,11 +1628,11 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
                 expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(userBalancesBefore.collateralsAave.DAI);
@@ -1209,21 +1752,21 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
 
-                await mockSwapRouter.setTestingNegativeScenarioOne(true);
+                await mockSwapRouter.setNegativeTest(NEGATIVE_TEST.SwapRouterNotSupported);
 
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
 
                 const userBalancesAfter = {
@@ -1234,12 +1777,12 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
                 expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(userBalancesBefore.collateralsAave.WETH);
@@ -1361,21 +1904,19 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
-
-                await mockSwapRouter.setTestingNegativeScenarioOne(true);
 
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ZeroAmountOut");
 
                 const userBalancesAfter = {
@@ -1386,12 +1927,12 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
                 expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(userBalancesBefore.collateralsAave.WETH);
@@ -1512,21 +2053,19 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
-
-                await mockSwapRouter.setTestingNegativeScenarioOne(true);
 
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ZeroAmountIn");
 
                 const userBalancesAfter = {
@@ -1537,12 +2076,12 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
                 expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(userBalancesBefore.collateralsAave.WETH);
@@ -1664,21 +2203,21 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
 
-                await mockSwapRouter.setTestingNegativeScenarioTwo(true);
+                await mockSwapRouter.setNegativeTest(NEGATIVE_TEST.SwapRouterNotSupported);
 
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
 
                 const userBalancesAfter = {
@@ -1689,12 +2228,12 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
                 expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(userBalancesBefore.collateralsAave.WETH);
@@ -1703,248 +2242,9 @@ describe("MigratorV2AndAaveV3", function () {
                 expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
                 expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
             });
-        });
 
-        context("* Testing ownership and access control", async () => {
-            it("Should set new owner", async () => {
-                const { migrator, owner, user } = await loadFixture(setupTestEnvironment);
-                const newOwner = user;
-                await migrator.connect(owner).transferOwnership(newOwner.address);
-                expect(await migrator.owner()).to.equal(newOwner.address);
-            });
-
-            it("Should revert if non-owner tries to set new owner", async () => {
-                const { migrator, owner, user } = await loadFixture(setupTestEnvironment);
-                const newOwner = user;
-                await expect(migrator.connect(user).transferOwnership(newOwner.address))
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-
-            it("Should set new adapter", async () => {
-                const { migrator, owner, aaveV3UsdsAdapter, contractsFactory } = await loadFixture(
-                    setupTestEnvironment
-                );
-
-                const newAdapter = await contractsFactory.AaveV3UsdsAdapterFactory.connect(owner).deploy({
-                    uniswapRouter: aaveV3UsdsAdapter.UNISWAP_ROUTER(),
-                    daiUsdsConverter: aaveV3UsdsAdapter.DAI_USDS_CONVERTER(),
-                    dai: aaveV3UsdsAdapter.DAI(),
-                    usds: aaveV3UsdsAdapter.USDS(),
-                    wrappedNativeToken: aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN(),
-                    aaveLendingPool: aaveV3UsdsAdapter.LENDING_POOL(),
-                    aaveDataProvider: aaveV3UsdsAdapter.LENDING_POOL(), // TODO: change to mockAaveDataProvider
-                    isFullMigration: true
-                });
-
-                await expect(migrator.connect(owner).setAdapter(newAdapter.address))
-                    .to.emit(migrator, "AdapterAllowed")
-                    .withArgs(newAdapter.address);
-
-                const adapters = await migrator.getAdapters();
-                expect(adapters).to.include(newAdapter.address);
-            });
-
-            it("Should revert if non-owner tries to set new adapter", async () => {
-                const { migrator, owner, user, aaveV3UsdsAdapter, contractsFactory } = await loadFixture(
-                    setupTestEnvironment
-                );
-
-                const newAdapter = await contractsFactory.AaveV3UsdsAdapterFactory.connect(owner).deploy({
-                    uniswapRouter: aaveV3UsdsAdapter.UNISWAP_ROUTER(),
-                    daiUsdsConverter: aaveV3UsdsAdapter.DAI_USDS_CONVERTER(),
-                    dai: aaveV3UsdsAdapter.DAI(),
-                    usds: aaveV3UsdsAdapter.USDS(),
-                    wrappedNativeToken: aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN(),
-                    aaveLendingPool: aaveV3UsdsAdapter.LENDING_POOL(),
-                    aaveDataProvider: aaveV3UsdsAdapter.LENDING_POOL(), // TODO: change to mockAaveDataProvider
-                    isFullMigration: true
-                });
-
-                await expect(migrator.connect(user).setAdapter(newAdapter.address))
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-
-            it("Should revert if adapter is already added", async () => {
-                const { migrator, owner, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(owner).setAdapter(aaveV3UsdsAdapter.address))
-                    .to.be.revertedWithCustomError(migrator, "AdapterAlreadyAllowed")
-                    .withArgs(aaveV3UsdsAdapter.address);
-            });
-
-            it("Should revert if adapter is zero address", async () => {
-                const { migrator, owner } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(owner).setAdapter(AddressZero)).to.be.revertedWithCustomError(
-                    migrator,
-                    "InvalidZeroAddress"
-                );
-            });
-
-            it("Should remove adapter", async () => {
-                const { migrator, owner, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(owner).removeAdapter(aaveV3UsdsAdapter.address))
-                    .to.emit(migrator, "AdapterRemoved")
-                    .withArgs(aaveV3UsdsAdapter.address);
-
-                const adapters = await migrator.getAdapters();
-                expect(adapters).to.not.include(aaveV3UsdsAdapter.address);
-            });
-
-            it("Should revert if non-owner tries to remove adapter", async () => {
-                const { migrator, user, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(user).removeAdapter(aaveV3UsdsAdapter.address))
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-
-            it("Should revert if adapter is not added", async () => {
-                const { migrator, owner } = await loadFixture(setupTestEnvironment);
-                const unknownAdapter = ethers.Wallet.createRandom().address;
-
-                await expect(migrator.connect(owner).removeAdapter(unknownAdapter)).to.be.revertedWithCustomError(
-                    migrator,
-                    "InvalidAdapter"
-                );
-            });
-
-            it("Should set new flashData", async () => {
-                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const newComet = ethers.Wallet.createRandom().address;
-
-                const newFlashData = {
-                    liquidityPool: mocks.mockUniswapV3Pool.address,
-                    baseToken: mocks.mockUSDS.address,
-                    isToken0: true
-                };
-                await expect(migrator.connect(owner).setFlashData(newComet, newFlashData))
-                    .to.emit(migrator, "FlashDataConfigured")
-                    .withArgs(newComet, newFlashData.liquidityPool, newFlashData.baseToken);
-
-                const flashData = await migrator.getFlashData(newComet);
-                expect(flashData.baseToken).to.equal(newFlashData.baseToken);
-                expect(flashData.liquidityPool).to.equal(newFlashData.liquidityPool);
-                expect(flashData.isToken0).to.equal(newFlashData.isToken0);
-            });
-
-            it("Should revert if non-owner tries to set new flashData", async () => {
-                const { migrator, user, mocks } = await loadFixture(setupTestEnvironment);
-                const newComet = ethers.Wallet.createRandom().address;
-
-                const newFlashData = {
-                    liquidityPool: mocks.mockUniswapV3Pool.address,
-                    baseToken: mocks.mockUSDS.address,
-                    isToken0: true
-                };
-                await expect(migrator.connect(user).setFlashData(newComet, newFlashData))
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-
-            it("Should revert if flashData includes zero address", async () => {
-                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const newComet = ethers.Wallet.createRandom().address;
-
-                let newFlashData = {
-                    liquidityPool: AddressZero,
-                    baseToken: mocks.mockUSDS.address,
-                    isToken0: true
-                };
-                await expect(
-                    migrator.connect(owner).setFlashData(newComet, newFlashData)
-                ).to.be.revertedWithCustomError(migrator, "InvalidZeroAddress");
-
-                newFlashData = {
-                    liquidityPool: mocks.mockUniswapV3Pool.address,
-                    baseToken: AddressZero,
-                    isToken0: true
-                };
-                await expect(
-                    migrator.connect(owner).setFlashData(newComet, newFlashData)
-                ).to.be.revertedWithCustomError(migrator, "InvalidZeroAddress");
-            });
-
-            it("Should revert if flashData already configured for specific comet", async () => {
-                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const newComet = ethers.Wallet.createRandom().address;
-
-                const newFlashData = {
-                    liquidityPool: mocks.mockUniswapV3Pool.address,
-                    baseToken: mocks.mockUSDS.address,
-                    isToken0: true
-                };
-                await migrator.connect(owner).setFlashData(newComet, newFlashData);
-
-                await expect(migrator.connect(owner).setFlashData(newComet, newFlashData))
-                    .to.be.revertedWithCustomError(migrator, "CometAlreadyConfigured")
-                    .withArgs(newComet);
-            });
-
-            it("Should remove flashData", async () => {
-                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockComet } = mocks;
-
-                await expect(migrator.connect(owner).removeFlashData(mockComet.address))
-                    .to.emit(migrator, "FlashDataRemoved")
-                    .withArgs(mockComet.address);
-
-                const flashData = await migrator.getFlashData(mockComet.address);
-
-                expect(flashData.baseToken).to.equal(AddressZero);
-                expect(flashData.liquidityPool).to.equal(AddressZero);
-                expect(flashData.isToken0).to.equal(false);
-            });
-
-            it("Should revert if non-owner tries to remove flashData", async () => {
-                const { migrator, user, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockComet } = mocks;
-
-                await expect(migrator.connect(user).removeFlashData(mockComet.address))
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-
-            it("Should revert if flashData is not configured", async () => {
-                const { migrator, owner } = await loadFixture(setupTestEnvironment);
-                const unknownComet = ethers.Wallet.createRandom().address;
-
-                await expect(migrator.connect(owner).removeFlashData(unknownComet))
-                    .to.be.revertedWithCustomError(migrator, "CometIsNotSupported")
-                    .withArgs(unknownComet);
-            });
-
-            it("Should set contract on pause", async () => {
-                const { migrator, owner } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(owner).pause()).to.emit(migrator, "Paused").withArgs(owner.address);
-                expect(await migrator.paused()).to.equal(true);
-            });
-
-            it("Should revert if non-owner tries to pause contract", async () => {
-                const { migrator, user } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(user).pause())
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-
-            it("Should set contract on unpause", async () => {
-                const { migrator, owner } = await loadFixture(setupTestEnvironment);
-                await migrator.connect(owner).pause();
-                await expect(migrator.connect(owner).unpause()).to.emit(migrator, "Unpaused").withArgs(owner.address);
-                expect(await migrator.paused()).to.equal(false);
-            });
-
-            it("Should revert if non-owner tries to unpause contract", async () => {
-                const { migrator, user } = await loadFixture(setupTestEnvironment);
-                await expect(migrator.connect(user).unpause())
-                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
-                    .withArgs(user.address);
-            });
-        });
-
-        context("* AaveV3 -> Comet | AaveV3UsdsAdapter", async () => {
-            // collateral - WETH; borrow - DAI; comet - USDS.
-            it("Should migrate a user's position successfully: convert and swap token", async () => {
-                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+            it("Should revert if debt token is not cleared: aaveV3Adapter", async () => {
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
                 const { tokenContracts, aaveContract } = mocks;
 
                 const aaveLendingPool = aaveContract.lendingPools;
@@ -1967,10 +2267,6 @@ describe("MigratorV2AndAaveV3", function () {
 
                     expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
                 }
-
-                // const supplyAmounts = Object.fromEntries(
-                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
-                // );
 
                 for (const [token, amount] of Object.entries(supplyAmounts)) {
                     const tokenContract = tokenContracts[token];
@@ -2013,7 +2309,7 @@ describe("MigratorV2AndAaveV3", function () {
                     borrows: [
                         {
                             debtToken: mocks.aaveContract.debtTokens.DAI.address,
-                            amount: parseEther("100"),
+                            amount: MaxUint256,
                             swapParams: {
                                 path: ethers.utils.concat([
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
@@ -2054,20 +2350,23 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
 
+                // Fake a partial debt closure
+                await aaveLendingPool.setNegativeTest(NEGATIVE_TEST.DebtNotCleared);
+
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
+                        .migrate(aaveV3Adapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3Adapter, "DebtNotCleared");
 
                 const userBalancesAfter = {
                     collateralsAave: {
@@ -2077,379 +2376,24 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(userBalancesBefore.collateralsAave.WETH);
+                expect(userBalancesAfter.borrowAave.DAI).to.be.equal(userBalancesBefore.borrowAave.DAI);
                 // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-
-            it("Should migrate a user's position successfully: convert and swap with proxy token", async () => {
-                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, aaveContract } = mocks;
-
-                const aaveLendingPool = aaveContract.lendingPools;
-
-                const supplyAmounts = {
-                    WETH: parseEther("500")
-                };
-
-                // Setup for AaveV3 -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                // const supplyAmounts = Object.fromEntries(
-                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
-                // );
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const aTokenContract = aaveContract.aTokens[token];
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Aave
-                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
-                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                // Borrow from Aave - DAI
-                const borrowAmounts = {
-                    DAI: parseEther("100")
-                };
-
-                for (const [token, amount] of Object.entries(borrowAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const debtTokenContract = aaveContract.debtTokens[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                // Init migration
-                // Approve migration
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const aTokenContract = aaveContract.aTokens[token];
-                    await aTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [
-                        {
-                            debtToken: mocks.aaveContract.debtTokens.DAI.address,
-                            amount: parseEther("100"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
-                                ]),
-                                amountInMaximum: parseEther("100")
-                            }
-                        }
-                    ],
-
-                    collaterals: [
-                        {
-                            aToken: mocks.aaveContract.aTokens.WETH.address,
-                            amount: parseEther("500"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
-                                    FEE_100,
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
-                                ]),
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
-                    },
-                    borrowAave: {
-                        DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = parseEther("500");
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
-                    },
-                    borrowAave: {
-                        DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-
-            it("Should migrate a user's position successfully: without borrow position | convert tokens", async () => {
-                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, aaveContract } = mocks;
-
-                const aaveLendingPool = aaveContract.lendingPools;
-
-                const supplyAmounts = {
-                    DAI: parseEther("700")
-                };
-
-                // Setup for AaveV3 -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const aTokenContract = aaveContract.aTokens[token];
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Aave
-                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
-                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const aTokenContract = aaveContract.aTokens[token];
-                    await aTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            aToken: mocks.aaveContract.aTokens.DAI.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
-                                ]),
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsAave: {
-                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsAave: {
-                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-
-            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
-                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, aaveContract } = mocks;
-
-                const aaveLendingPool = aaveContract.lendingPools;
-
-                const supplyAmounts = {
-                    WETH: parseEther("700")
-                };
-
-                // Setup for AaveV3 -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const aTokenContract = aaveContract.aTokens[token];
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Aave
-                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
-                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const aTokenContract = aaveContract.aTokens[token];
-                    await aTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            aToken: mocks.aaveContract.aTokens.WETH.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: "0x",
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(aaveV3UsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
-                // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
-                expect(userBalancesAfter.collateralsComet.WETH).to.be.above(userBalancesBefore.collateralsComet.WETH);
             });
-        });
 
-        context("* AaveV3 -> Comet | AaveV3Adapter", async () => {
-            it("Should migrate a user's position successfully with: convert and swap token", async () => {
-                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, aaveContract } = mocks;
+            it("Should revert if debt token is not cleared: aaveV3UsdsAdapter", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockCometUsdt, mockWETH } = mocks;
 
                 const aaveLendingPool = aaveContract.lendingPools;
 
@@ -2471,10 +2415,6 @@ describe("MigratorV2AndAaveV3", function () {
 
                     expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
                 }
-
-                // const supplyAmounts = Object.fromEntries(
-                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
-                // );
 
                 for (const [token, amount] of Object.entries(supplyAmounts)) {
                     const tokenContract = tokenContracts[token];
@@ -2516,12 +2456,13 @@ describe("MigratorV2AndAaveV3", function () {
                 const position = {
                     borrows: [
                         {
-                            debtToken: mocks.aaveContract.debtTokens.DAI.address,
-                            amount: parseEther("100"),
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
                             swapParams: {
                                 path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
                                 amountInMaximum: parseEther("100")
                             }
@@ -2530,13 +2471,13 @@ describe("MigratorV2AndAaveV3", function () {
 
                     collaterals: [
                         {
-                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            aToken: aaveContract.aTokens.WETH.address,
                             amount: parseEther("500"),
                             swapParams: {
                                 path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
                                     FEE_100,
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
                                 amountOutMinimum: 0
                             }
@@ -2552,260 +2493,56 @@ describe("MigratorV2AndAaveV3", function () {
 
                 const userBalancesBefore = {
                     collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                        WETH: await aaveContract.aTokens.WETH.balanceOf(user.address)
                     },
                     borrowAave: {
-                        DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
+                        DAI: await aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
 
+                // Fake a partial debt closure
+                await aaveLendingPool.setNegativeTest(NEGATIVE_TEST.DebtNotCleared);
+
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(aaveV3Adapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "DebtNotCleared");
 
                 const userBalancesAfter = {
                     collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                        WETH: await aaveContract.aTokens.WETH.balanceOf(user.address)
                     },
                     borrowAave: {
-                        DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
+                        DAI: await aaveContract.debtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(userBalancesBefore.collateralsAave.WETH);
+                expect(userBalancesAfter.borrowAave.DAI).to.be.equal(userBalancesBefore.borrowAave.DAI);
                 // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.equal(userBalancesBefore.collateralsComet.USDT);
             });
 
-            it("Should migrate a user's position successfully: without borrow position | convert tokens", async () => {
-                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, aaveContract } = mocks;
-
-                const aaveLendingPool = aaveContract.lendingPools;
-
-                const supplyAmounts = {
-                    DAI: parseEther("700")
-                };
-
-                // Setup for AaveV3 -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const aTokenContract = aaveContract.aTokens[token];
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Aave
-                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
-                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const aTokenContract = aaveContract.aTokens[token];
-                    await aTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            aToken: mocks.aaveContract.aTokens.DAI.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
-                                ]),
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsAave: {
-                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(aaveV3Adapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsAave: {
-                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-
-            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
-                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, aaveContract } = mocks;
-
-                const aaveLendingPool = aaveContract.lendingPools;
-
-                const supplyAmounts = {
-                    WETH: parseEther("700")
-                };
-
-                // Setup for AaveV3 -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const aTokenContract = aaveContract.aTokens[token];
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Aave
-                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
-                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const aTokenContract = aaveContract.aTokens[token];
-                    await aTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            aToken: mocks.aaveContract.aTokens.WETH.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: "0x",
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(aaveV3Adapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsAave: {
-                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Aave
-                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
-                expect(userBalancesAfter.collateralsComet.WETH).to.be.above(userBalancesBefore.collateralsComet.WETH);
-            });
-        });
-
-        context("* Spark -> Comet | sparkUsdsAdapter", async () => {
-            // collateral - WETH; borrow - DAI; comet - USDS.
-            it("Should migrate a user's position successfully with: convert and swap token", async () => {
-                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
+            it("Should revert if debt token is not cleared: sparkAdapter", async () => {
+                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
 
                 const sparkLendingPool = sparkContract.lendingPools;
 
@@ -2813,7 +2550,7 @@ describe("MigratorV2AndAaveV3", function () {
                     WETH: parseEther("500")
                 };
 
-                // Setup for Spark -> Comet migration
+                // Setup for AaveV3 -> Comet migration
                 // Fund user with tokens
                 for (const [token, amount] of Object.entries(supplyAmounts)) {
                     const tokenContract = tokenContracts[token];
@@ -2840,7 +2577,7 @@ describe("MigratorV2AndAaveV3", function () {
                     expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
                 }
 
-                // Borrow from Spark - DAI
+                // Borrow from Aave - DAI
                 const borrowAmounts = {
                     DAI: parseEther("100")
                 };
@@ -2869,7 +2606,7 @@ describe("MigratorV2AndAaveV3", function () {
                     borrows: [
                         {
                             debtToken: sparkContract.spDebtTokens.DAI.address,
-                            amount: parseEther("100"),
+                            amount: MaxUint256,
                             swapParams: {
                                 path: ethers.utils.concat([
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
@@ -2910,20 +2647,23 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mockComet.collateralBalanceOf(user.address, tokenContracts.WETH.address),
-                        USDS: await mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
+
+                // Fake a partial debt closure
+                await sparkLendingPool.setNegativeTest(NEGATIVE_TEST.DebtNotCleared);
 
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(sparkUsdsAdapter.address, mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
+                        .migrate(sparkAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(sparkAdapter, "DebtNotCleared");
 
                 const userBalancesAfter = {
                     collateralsSpark: {
@@ -2933,24 +2673,24 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mockComet.collateralBalanceOf(user.address, tokenContracts.WETH.address),
-                        USDS: await mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(Zero);
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(userBalancesBefore.collateralsSpark.WETH);
+                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(userBalancesBefore.borrowSpark.DAI);
                 // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
             });
 
-            it("Should migrate a user's position successfully with: convert and swap with proxy token", async () => {
+            it("Should revert if debt token is not cleared: sparkUsdsAdapter", async () => {
                 const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
 
                 const sparkLendingPool = sparkContract.lendingPools;
 
@@ -2958,7 +2698,7 @@ describe("MigratorV2AndAaveV3", function () {
                     WETH: parseEther("500")
                 };
 
-                // Setup for Spark -> Comet migration
+                // Setup for AaveV3 -> Comet migration
                 // Fund user with tokens
                 for (const [token, amount] of Object.entries(supplyAmounts)) {
                     const tokenContract = tokenContracts[token];
@@ -2985,7 +2725,7 @@ describe("MigratorV2AndAaveV3", function () {
                     expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
                 }
 
-                // Borrow from Spark - DAI
+                // Borrow from Aave - DAI
                 const borrowAmounts = {
                     DAI: parseEther("100")
                 };
@@ -3014,12 +2754,9 @@ describe("MigratorV2AndAaveV3", function () {
                     borrows: [
                         {
                             debtToken: sparkContract.spDebtTokens.DAI.address,
-                            amount: parseEther("100"),
+                            amount: MaxUint256,
                             swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
-                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
-                                ]),
+                                path: "0x",
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -3055,20 +2792,23 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mockComet.collateralBalanceOf(user.address, tokenContracts.WETH.address),
-                        USDS: await mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("500");
 
+                // Fake a partial debt closure
+                await sparkLendingPool.setNegativeTest(NEGATIVE_TEST.DebtNotCleared);
+
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(sparkUsdsAdapter.address, mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
+                        .migrate(sparkUsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(sparkUsdsAdapter, "DebtNotCleared");
 
                 const userBalancesAfter = {
                     collateralsSpark: {
@@ -3078,582 +2818,24 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
                     },
                     collateralsComet: {
-                        WETH: await mockComet.collateralBalanceOf(user.address, tokenContracts.WETH.address),
-                        USDS: await mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesAfter", userBalancesAfter);
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(Zero);
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(userBalancesBefore.collateralsSpark.WETH);
+                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(userBalancesBefore.borrowSpark.DAI);
                 // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-
-            it("Should migrate a user's position successfully: without borrow position | convert tokens", async () => {
-                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
-
-                const sparkLendingPool = sparkContract.lendingPools;
-
-                const supplyAmounts = {
-                    DAI: parseEther("700")
-                };
-
-                // Setup for Spark -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const spTokenContract = sparkContract.spTokens[token];
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Spark
-                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
-                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const spTokenContract = sparkContract.spTokens[token];
-                    await spTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            spToken: sparkContract.spTokens.DAI.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
-                                ]),
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(sparkUsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-
-            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
-                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
-
-                const sparkLendingPool = sparkContract.lendingPools;
-
-                const supplyAmounts = {
-                    DAI: parseEther("700")
-                };
-
-                // Setup for Spark -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const spTokenContract = sparkContract.spTokens[token];
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Spark
-                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
-                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const spTokenContract = sparkContract.spTokens[token];
-                    await spTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            spToken: sparkContract.spTokens.DAI.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: "0x",
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        DAI: await mockComet.collateralBalanceOf(user.address, tokenContracts.DAI.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(sparkUsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        DAI: await mockComet.collateralBalanceOf(user.address, tokenContracts.DAI.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
-                expect(userBalancesAfter.collateralsComet.DAI).to.be.above(userBalancesBefore.collateralsComet.DAI);
-            });
-        });
-        context("* Spark -> Comet | sparkAdapter", async () => {
-            // collateral - WETH; borrow - DAI; comet - USDS.
-            it("Should migrate a user's position successfully with: convert and swap token", async () => {
-                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
-
-                const sparkLendingPool = sparkContract.lendingPools;
-
-                const supplyAmounts = {
-                    WETH: parseEther("500")
-                };
-
-                // Setup for AaveV3 -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                // const supplyAmounts = Object.fromEntries(
-                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
-                // );
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const aTokenContract = sparkContract.spTokens[token];
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Aave
-                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
-                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                // Borrow from Aave - DAI
-                const borrowAmounts = {
-                    DAI: parseEther("100")
-                };
-
-                for (const [token, amount] of Object.entries(borrowAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const debtTokenContract = sparkContract.spDebtTokens[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    await sparkLendingPool.connect(user).borrow(tokenContract.address, amount);
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                // Init migration
-                // Approve migration
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const aTokenContract = sparkContract.spTokens[token];
-                    await aTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [
-                        {
-                            debtToken: sparkContract.spDebtTokens.DAI.address,
-                            amount: parseEther("100"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
-                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
-                                ]),
-                                amountInMaximum: parseEther("100")
-                            }
-                        }
-                    ],
-
-                    collaterals: [
-                        {
-                            aToken: sparkContract.spTokens.WETH.address,
-                            amount: parseEther("500"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
-                                    FEE_100,
-                                    ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20)
-                                ]),
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsSpark: {
-                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
-                    },
-                    borrowSpark: {
-                        DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        WETH: await mockComet.collateralBalanceOf(user.address, tokenContracts.WETH.address),
-                        USDS: await mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = parseEther("500");
-
-                await expect(
-                    migrator.connect(user).migrate(sparkAdapter.address, mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsSpark: {
-                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
-                    },
-                    borrowSpark: {
-                        DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        WETH: await mockComet.collateralBalanceOf(user.address, tokenContracts.WETH.address),
-                        USDS: await mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
             });
 
-            it("Should migrate a user's position successfully: without borrow position | convert collateral", async () => {
-                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
-
-                const sparkLendingPool = sparkContract.lendingPools;
-
-                const supplyAmounts = {
-                    DAI: parseEther("700")
-                };
-
-                // Setup for Spark -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const spTokenContract = sparkContract.spTokens[token];
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Spark
-                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
-                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const spTokenContract = sparkContract.spTokens[token];
-                    await spTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            spToken: sparkContract.spTokens.DAI.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
-                                ]),
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(sparkAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
-            });
-            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
-                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, sparkContract, mockComet } = mocks;
-
-                const sparkLendingPool = sparkContract.lendingPools;
-
-                const supplyAmounts = {
-                    DAI: parseEther("700")
-                };
-
-                // Setup for Spark -> Comet migration
-                // Fund user with tokens
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    if ("mint" in tokenContract) {
-                        await tokenContract.connect(user).mint(amount);
-                    } else {
-                        await tokenContract.connect(user).deposit({ value: amount });
-                    }
-
-                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const tokenContract = tokenContracts[token];
-                    const spTokenContract = sparkContract.spTokens[token];
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
-
-                    // Approve token and deposit to Spark
-                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
-                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
-
-                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
-                }
-                // Init migration
-                // Approve migration
-                for (const [token, amount] of Object.entries(supplyAmounts)) {
-                    const spTokenContract = sparkContract.spTokens[token];
-                    await spTokenContract.connect(user).approve(migrator.address, amount);
-                }
-
-                const position = {
-                    borrows: [],
-                    collaterals: [
-                        {
-                            spToken: sparkContract.spTokens.DAI.address,
-                            amount: parseEther("700"),
-                            swapParams: {
-                                path: "0x",
-                                amountOutMinimum: 0
-                            }
-                        }
-                    ]
-                };
-
-                // Encode the data
-                const migrationData = ethers.utils.defaultAbiCoder.encode(
-                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
-                    [[position.borrows, position.collaterals]]
-                );
-
-                const userBalancesBefore = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        DAI: await mockComet.collateralBalanceOf(user.address, tokenContracts.DAI.address)
-                    }
-                };
-
-                console.log("\nuserBalancesBefore", userBalancesBefore);
-
-                const flashAmount = Zero;
-
-                await expect(
-                    migrator
-                        .connect(user)
-                        .migrate(sparkAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
-
-                const userBalancesAfter = {
-                    collateralsSpark: {
-                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
-                    },
-                    collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address),
-                        DAI: await mockComet.collateralBalanceOf(user.address, tokenContracts.DAI.address)
-                    }
-                };
-
-                console.log("\nuserBalancesAfter", userBalancesAfter);
-
-                // Check user balances after migration - Spark
-                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
-                // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
-                expect(userBalancesAfter.collateralsComet.DAI).to.be.above(userBalancesBefore.collateralsComet.DAI);
-            });
-        });
-
-        context("* Morpho -> Comet | morphoUsdsAdapter", async () => {
-            it("Should migrate a user's position successfully with: convert token", async function () {
-                const { migrator, user, mocks, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+            it("Should revert if debt token is not cleared: morphoAdapter", async () => {
+                const { migrator, user, mocks, morphoAdapter } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
 
                 const supplyData = {
                     USDS: { market: "DAI_USDS", supplyAmount: parseEther("500") }
@@ -3713,10 +2895,7 @@ describe("MigratorV2AndAaveV3", function () {
                             marketId: morphoMarketIds.DAI_USDS,
                             assetsAmount: borrowAData.DAI.borrowAmount,
                             swapParams: {
-                                path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
-                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
-                                ]),
+                                path: "0x",
                                 amountInMaximum: borrowAData.DAI.borrowAmount
                             }
                         }
@@ -3747,26 +2926,110 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).borrowShares
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("100");
-
-                console.log("Migrator address: ", migrator.address);
-                console.log("MorphoAdapter address: ", morphoUsdsAdapter.address);
-                console.log("Comet address: ", mocks.mockComet.address);
+                // Fake a partial debt closure
+                await mockMorpho.setNegativeTest(NEGATIVE_TEST.DebtNotCleared);
 
                 // Execute migration
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoUsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
-                ).to.emit(migrator, "MigrationExecuted");
+                        .migrate(morphoAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(morphoAdapter, "DebtNotCleared");
+            });
 
-                const userBalancesAfter = {
+            it("Should revert if debt token is not cleared: morphoUsdsAdapter", async () => {
+                const { migrator, user, mocks, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+
+                const supplyData = {
+                    USDS: { market: "DAI_USDS", supplyAmount: parseEther("500") }
+                };
+
+                // Setup for Morpho -> Comet migration
+                // Fund user with tokens
+                for (const [token, data] of Object.entries(supplyData)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(data.supplyAmount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: data.supplyAmount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(data.supplyAmount);
+                }
+
+                // Supply collateral to Morpho
+                for (const [token, data] of Object.entries(supplyData)) {
+                    const tokenContract = tokenContracts[token];
+                    const marketParams = morphoMarketParams[data.market];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(data.supplyAmount);
+
+                    await tokenContract.connect(user).approve(mockMorpho.address, data.supplyAmount);
+
+                    await mockMorpho
+                        .connect(user)
+                        .supplyCollateral(marketParams, data.supplyAmount, user.address, "0x");
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                }
+
+                const borrowAData = {
+                    DAI: { marketId: "DAI_USDS", borrowAmount: parseEther("100") }
+                };
+
+                for (const [token, data] of Object.entries(borrowAData)) {
+                    const tokenContract = tokenContracts[token];
+                    const marketParams = morphoMarketParams[data.marketId];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Borrow from Morpho
+                    await mocks.mockMorpho
+                        .connect(user)
+                        .borrow(marketParams, data.borrowAmount, 0, user.address, user.address);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(data.borrowAmount);
+                }
+
+                // Create migration position
+                const position = {
+                    borrows: [
+                        {
+                            marketId: morphoMarketIds.DAI_USDS,
+                            assetsAmount: borrowAData.DAI.borrowAmount,
+                            swapParams: {
+                                path: "0x",
+                                amountInMaximum: borrowAData.DAI.borrowAmount
+                            }
+                        }
+                    ],
+                    collaterals: [
+                        {
+                            marketId: morphoMarketIds.DAI_USDS,
+                            assetsAmount: supplyData.USDS.supplyAmount,
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_MORPHO_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
                     collateralMorpho: {
                         USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
                     },
@@ -3774,20 +3037,2936 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).borrowShares
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                // Check user balances after migration - Morpho
-                expect(userBalancesAfter.collateralMorpho.USDS).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowMorpho.DAI).to.be.equal(Zero);
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("100");
+                // Fake a partial debt closure
+                await mockMorpho.setNegativeTest(NEGATIVE_TEST.DebtNotCleared);
+
+                // Execute migration
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(morphoUsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(morphoUsdsAdapter, "DebtNotCleared");
+            });
+
+            it("Should revert if trying to reenter migration function on the adapter: aaveV3Adapter", async () => {
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockSwapRouter } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: mocks.aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                // Fake a partial debt closure
+                await mockSwapRouter.setNegativeTest(NEGATIVE_TEST.Reentrant);
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3Adapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                    // ).to.be.revertedWithCustomError(aaveV3Adapter, "ReentrancyGuardReentrantCall"); ///< Because of the construction try-catch
+                ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
+            });
+
+            it("Should revert if trying to reenter migration function on the adapter: aaveV3UsdsAdapter", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockSwapRouter, mockCometUsdt, mockWETH } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                // Fake a partial debt closure
+                await mockSwapRouter.setAdapter(aaveV3UsdsAdapter.address);
+                await mockSwapRouter.setNegativeTest(NEGATIVE_TEST.Reentrant);
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                    // ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ReentrancyGuardReentrantCall"); ///< Because of the construction try-catch
+                ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
+            });
+
+            // it("Should revert if )
+        });
+
+        context("* Testing ownership and access control", async () => {
+            it("Should set new owner", async () => {
+                const { migrator, owner, user } = await loadFixture(setupTestEnvironment);
+                const newOwner = user;
+                await migrator.connect(owner).transferOwnership(newOwner.address);
+                expect(await migrator.owner()).to.equal(newOwner.address);
+            });
+
+            it("Should revert if non-owner tries to set new owner", async () => {
+                const { migrator, owner, user } = await loadFixture(setupTestEnvironment);
+                const newOwner = user;
+                await expect(migrator.connect(user).transferOwnership(newOwner.address))
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+
+            it("Should set new adapter", async () => {
+                const { migrator, owner, aaveV3UsdsAdapter, contractsFactory } = await loadFixture(
+                    setupTestEnvironment
+                );
+
+                const newAdapter = await contractsFactory.AaveV3UsdsAdapterFactory.connect(owner).deploy({
+                    uniswapRouter: aaveV3UsdsAdapter.UNISWAP_ROUTER(),
+                    daiUsdsConverter: aaveV3UsdsAdapter.DAI_USDS_CONVERTER(),
+                    dai: aaveV3UsdsAdapter.DAI(),
+                    usds: aaveV3UsdsAdapter.USDS(),
+                    // wrappedNativeToken: aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN(),
+                    aaveLendingPool: aaveV3UsdsAdapter.LENDING_POOL(),
+                    aaveDataProvider: aaveV3UsdsAdapter.LENDING_POOL(), // TODO: change to mockAaveDataProvider
+                    isFullMigration: true
+                });
+
+                await expect(migrator.connect(owner).setAdapter(newAdapter.address))
+                    .to.emit(migrator, "AdapterAllowed")
+                    .withArgs(newAdapter.address);
+
+                const adapters = await migrator.getAdapters();
+                expect(adapters).to.include(newAdapter.address);
+            });
+
+            it("Should revert if non-owner tries to set new adapter", async () => {
+                const { migrator, owner, user, aaveV3UsdsAdapter, contractsFactory } = await loadFixture(
+                    setupTestEnvironment
+                );
+
+                const newAdapter = await contractsFactory.AaveV3UsdsAdapterFactory.connect(owner).deploy({
+                    uniswapRouter: aaveV3UsdsAdapter.UNISWAP_ROUTER(),
+                    daiUsdsConverter: aaveV3UsdsAdapter.DAI_USDS_CONVERTER(),
+                    dai: aaveV3UsdsAdapter.DAI(),
+                    usds: aaveV3UsdsAdapter.USDS(),
+                    // wrappedNativeToken: aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN(),
+                    aaveLendingPool: aaveV3UsdsAdapter.LENDING_POOL(),
+                    aaveDataProvider: aaveV3UsdsAdapter.LENDING_POOL(), // TODO: change to mockAaveDataProvider
+                    isFullMigration: true
+                });
+
+                await expect(migrator.connect(user).setAdapter(newAdapter.address))
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+
+            it("Should revert if adapter is already added", async () => {
+                const { migrator, owner, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(owner).setAdapter(aaveV3UsdsAdapter.address))
+                    .to.be.revertedWithCustomError(migrator, "AdapterAlreadyAllowed")
+                    .withArgs(aaveV3UsdsAdapter.address);
+            });
+
+            it("Should revert if adapter is zero address", async () => {
+                const { migrator, owner } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(owner).setAdapter(AddressZero)).to.be.revertedWithCustomError(
+                    migrator,
+                    "InvalidZeroAddress"
+                );
+            });
+
+            it("Should remove adapter", async () => {
+                const { migrator, owner, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
+                // Pause the contract before removing the adapter
+                await migrator.connect(owner).pause();
+                await expect(migrator.connect(owner).removeAdapter(aaveV3UsdsAdapter.address))
+                    .to.emit(migrator, "AdapterRemoved")
+                    .withArgs(aaveV3UsdsAdapter.address);
+
+                const adapters = await migrator.getAdapters();
+                expect(adapters).to.not.include(aaveV3UsdsAdapter.address);
+            });
+
+            it("Should revert if contract is not paused", async () => {
+                const { migrator, owner, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(owner).removeAdapter(aaveV3UsdsAdapter.address))
+                    .to.be.revertedWithCustomError(migrator, "ExpectedPause")
+                    .withArgs();
+            });
+
+            it("Should revert if non-owner tries to remove adapter", async () => {
+                const { migrator, user, aaveV3UsdsAdapter } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(user).removeAdapter(aaveV3UsdsAdapter.address))
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+
+            it("Should revert if adapter is not added", async () => {
+                const { migrator, owner } = await loadFixture(setupTestEnvironment);
+                // Pause the contract before removing the adapter
+                await migrator.connect(owner).pause();
+                const unknownAdapter = ethers.Wallet.createRandom().address;
+
+                await expect(migrator.connect(owner).removeAdapter(unknownAdapter)).to.be.revertedWithCustomError(
+                    migrator,
+                    "InvalidAdapter"
+                );
+            });
+
+            it("Should set new flashData", async () => {
+                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
+                const newComet = ethers.Wallet.createRandom().address;
+
+                const newFlashData = {
+                    liquidityPool: mocks.uniswapV3PoolUsdsDai.address,
+                    baseToken: mocks.mockUSDS.address,
+                    isToken0: true
+                };
+                await expect(migrator.connect(owner).setFlashData(newComet, newFlashData))
+                    .to.emit(migrator, "FlashDataConfigured")
+                    .withArgs(newComet, newFlashData.liquidityPool, newFlashData.baseToken);
+
+                const flashData = await migrator.getFlashData(newComet);
+                expect(flashData.baseToken).to.equal(newFlashData.baseToken);
+                expect(flashData.liquidityPool).to.equal(newFlashData.liquidityPool);
+                expect(flashData.isToken0).to.equal(newFlashData.isToken0);
+            });
+
+            it("Should revert if non-owner tries to set new flashData", async () => {
+                const { migrator, user, mocks } = await loadFixture(setupTestEnvironment);
+                const newComet = ethers.Wallet.createRandom().address;
+
+                const newFlashData = {
+                    liquidityPool: mocks.uniswapV3PoolUsdsDai.address,
+                    baseToken: mocks.mockUSDS.address,
+                    isToken0: true
+                };
+                await expect(migrator.connect(user).setFlashData(newComet, newFlashData))
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+
+            it("Should revert if flashData includes zero address", async () => {
+                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
+                const newComet = ethers.Wallet.createRandom().address;
+
+                let newFlashData = {
+                    liquidityPool: AddressZero,
+                    baseToken: mocks.mockUSDS.address,
+                    isToken0: true
+                };
+                await expect(
+                    migrator.connect(owner).setFlashData(newComet, newFlashData)
+                ).to.be.revertedWithCustomError(migrator, "InvalidZeroAddress");
+
+                newFlashData = {
+                    liquidityPool: mocks.uniswapV3PoolUsdsDai.address,
+                    baseToken: AddressZero,
+                    isToken0: true
+                };
+                await expect(
+                    migrator.connect(owner).setFlashData(newComet, newFlashData)
+                ).to.be.revertedWithCustomError(migrator, "InvalidZeroAddress");
+            });
+
+            it("Should revert if flashData already configured for specific comet", async () => {
+                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
+                const newComet = ethers.Wallet.createRandom().address;
+
+                const newFlashData = {
+                    liquidityPool: mocks.uniswapV3PoolUsdsDai.address,
+                    baseToken: mocks.mockUSDS.address,
+                    isToken0: true
+                };
+                await migrator.connect(owner).setFlashData(newComet, newFlashData);
+
+                await expect(migrator.connect(owner).setFlashData(newComet, newFlashData))
+                    .to.be.revertedWithCustomError(migrator, "CometAlreadyConfigured")
+                    .withArgs(newComet);
+            });
+
+            it("Should remove flashData", async () => {
+                const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
+                const { mockCometUsds } = mocks;
+
+                await expect(migrator.connect(owner).removeFlashData(mockCometUsds.address))
+                    .to.emit(migrator, "FlashDataRemoved")
+                    .withArgs(mockCometUsds.address);
+
+                const flashData = await migrator.getFlashData(mockCometUsds.address);
+
+                expect(flashData.baseToken).to.equal(AddressZero);
+                expect(flashData.liquidityPool).to.equal(AddressZero);
+                expect(flashData.isToken0).to.equal(false);
+            });
+
+            it("Should revert if non-owner tries to remove flashData", async () => {
+                const { migrator, user, mocks } = await loadFixture(setupTestEnvironment);
+                const { mockCometUsds } = mocks;
+
+                await expect(migrator.connect(user).removeFlashData(mockCometUsds.address))
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+
+            it("Should revert if flashData is not configured", async () => {
+                const { migrator, owner } = await loadFixture(setupTestEnvironment);
+                const unknownComet = ethers.Wallet.createRandom().address;
+
+                await expect(migrator.connect(owner).removeFlashData(unknownComet))
+                    .to.be.revertedWithCustomError(migrator, "CometIsNotSupported")
+                    .withArgs(unknownComet);
+            });
+
+            it("Should set contract on pause", async () => {
+                const { migrator, owner } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(owner).pause()).to.emit(migrator, "Paused").withArgs(owner.address);
+                expect(await migrator.paused()).to.equal(true);
+            });
+
+            it("Should revert if non-owner tries to pause contract", async () => {
+                const { migrator, user } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(user).pause())
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+
+            it("Should set contract on unpause", async () => {
+                const { migrator, owner } = await loadFixture(setupTestEnvironment);
+                await migrator.connect(owner).pause();
+                await expect(migrator.connect(owner).unpause()).to.emit(migrator, "Unpaused").withArgs(owner.address);
+                expect(await migrator.paused()).to.equal(false);
+            });
+
+            it("Should revert if non-owner tries to unpause contract", async () => {
+                const { migrator, user } = await loadFixture(setupTestEnvironment);
+                await expect(migrator.connect(user).unpause())
+                    .to.be.revertedWithCustomError(migrator, "OwnableUnauthorizedAccount")
+                    .withArgs(user.address);
+            });
+        });
+
+        context("* AaveV3 -> Comet | AaveV3UsdsAdapter", async () => {
+            // collateral - WETH; borrow - USDS; comet - USDS.
+            it("Should migrate a user's position successfully: convert and swap token", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // const supplyAmounts = Object.fromEntries(
+                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
+                // );
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - USDS
+                const borrowAmounts = {
+                    USDS: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: mocks.aaveContract.debtTokens.USDS.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowAave.USDS).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: convert and swap token", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // const supplyAmounts = Object.fromEntries(
+                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
+                // );
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    USDS: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: mocks.aaveContract.debtTokens.USDS.address,
+                            amount: parseEther("100"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowAave.USDS).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: convert and swap with proxy token", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                // await migrator.connect(user).removeFlashData
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // const supplyAmounts = Object.fromEntries(
+                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
+                // );
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    USDS: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: mocks.aaveContract.debtTokens.USDS.address,
+                            amount: parseEther("100"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDS: await mocks.aaveContract.debtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowAave.USDS).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position | convert tokens", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    DAI: parseEther("700")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.DAI.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
                 // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
             });
+
+            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("700")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.above(userBalancesBefore.collateralsComet.WETH);
+            });
+        });
+
+        context("* AaveV3 -> Comet | AaveV3Adapter", async () => {
+            it("Should migrate a user's position successfully with: convert and swap token", async () => {
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockWETH, mockCometUsdt } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // const supplyAmounts = Object.fromEntries(
+                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
+                // );
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        DAI: await aaveContract.debtTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3Adapter.address, mocks.mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        DAI: await mocks.aaveContract.debtTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mocks.mockCometUsdt.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDT: await mocks.mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
+            it("Should migrate a user's position successfully: swap only collateral position", async () => {
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockCometUsdt, mockWETH } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - USDT
+                const borrowAmounts = {
+                    USDT: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.USDT.address,
+                            amount: parseEther("100"),
+                            swapParams: {
+                                path: "0x",
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDT: await aaveContract.debtTokens.USDT.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3Adapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowAave: {
+                        USDT: await aaveContract.debtTokens.USDT.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowAave.USDT).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position | convert tokens", async () => {
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    DAI: parseEther("700")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.DAI.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3Adapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        DAI: await mocks.aaveContract.aTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
+                const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("700")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            aToken: mocks.aaveContract.aTokens.WETH.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3Adapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsAave: {
+                        WETH: await mocks.aaveContract.aTokens.WETH.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Aave
+                expect(userBalancesAfter.collateralsAave.WETH).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.above(userBalancesBefore.collateralsComet.WETH);
+            });
+        });
+
+        context("* Spark -> Comet | sparkUsdsAdapter", async () => {
+            // collateral - WETH; borrow - DAI; comet - USDT.
+            it("Should migrate a user's position successfully: swap collateral and borrow positions", async () => {
+                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsdt } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = sparkContract.spTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Spark - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = sparkContract.spDebtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await sparkLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: sparkContract.spDebtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkUsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
+            // collateral - WETH; borrow - DAI; comet - USDT.
+            it("Should migrate a user's position successfully: swap only collateral position", async () => {
+                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsdt } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = sparkContract.spTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Spark - USDT
+                const borrowAmounts = {
+                    USDT: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = sparkContract.spDebtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await sparkLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: sparkContract.spDebtTokens.USDT.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: "0x",
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        USDT: await sparkContract.spDebtTokens.USDT.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkUsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        USDT: await sparkContract.spDebtTokens.USDT.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowSpark.USDT).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
+            it("Should migrate a user's position successfully: convert and swap with proxy token", async () => {
+                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = sparkContract.spTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Spark - DAI
+                const borrowAmounts = {
+                    USDS: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = sparkContract.spDebtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await sparkLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: sparkContract.spDebtTokens.USDS.address,
+                            amount: parseEther("100"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        USDS: await sparkContract.spDebtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsds.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDS: await mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkUsdsAdapter.address, mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        USDS: await sparkContract.spDebtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsds.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDS: await mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowSpark.USDS).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position | convert tokens", async () => {
+                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    DAI: parseEther("700")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const spTokenContract = sparkContract.spTokens[token];
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Spark
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.DAI.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkUsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
+                const { migrator, user, sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    DAI: parseEther("700")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const spTokenContract = sparkContract.spTokens[token];
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Spark
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.DAI.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        DAI: await mockCometUsds.collateralBalanceOf(user.address, tokenContracts.DAI.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkUsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        DAI: await mockCometUsds.collateralBalanceOf(user.address, tokenContracts.DAI.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.DAI).to.be.above(userBalancesBefore.collateralsComet.DAI);
+            });
+        });
+        context("* Spark -> Comet | sparkAdapter", async () => {
+            // collateral - WETH; borrow - DAI; comet - USDT.
+            it("Should migrate a user's position successfully: swap collateral and borrow position", async () => {
+                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsdt } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // const supplyAmounts = Object.fromEntries(
+                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
+                // );
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = sparkContract.spTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = sparkContract.spDebtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await sparkLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = sparkContract.spTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: sparkContract.spDebtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: sparkContract.spTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        DAI: await sparkContract.spDebtTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowSpark.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
+            it("Should migrate a user's position successfully: swap only collateral position", async () => {
+                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsdt } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // const supplyAmounts = Object.fromEntries(
+                //     Object.entries(fundingData).map(([token, amount]) => [token, amount])
+                // );
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = sparkContract.spTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - USDT
+                const borrowAmounts = {
+                    USDT: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = sparkContract.spDebtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await sparkLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = sparkContract.spTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: sparkContract.spDebtTokens.USDT.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: "0x",
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: sparkContract.spTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        USDS: await sparkContract.spDebtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("500");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        WETH: await sparkContract.spTokens.WETH.balanceOf(user.address)
+                    },
+                    borrowSpark: {
+                        USDS: await sparkContract.spDebtTokens.USDS.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, tokenContracts.WETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowSpark.USDS).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position | convert collateral", async () => {
+                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    DAI: parseEther("700")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const spTokenContract = sparkContract.spTokens[token];
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Spark
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.DAI.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+            });
+
+            it("Should migrate a user's position successfully: without borrow position |  without swap and convert", async () => {
+                const { migrator, user, sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, sparkContract, mockCometUsds } = mocks;
+
+                const sparkLendingPool = sparkContract.lendingPools;
+
+                const supplyAmounts = {
+                    DAI: parseEther("700")
+                };
+
+                // Setup for Spark -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const spTokenContract = sparkContract.spTokens[token];
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Spark
+                    await tokenContract.connect(user).approve(sparkLendingPool.address, amount);
+                    await sparkLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await spTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+                // Init migration
+                // Approve migration
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const spTokenContract = sparkContract.spTokens[token];
+                    await spTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const position = {
+                    borrows: [],
+                    collaterals: [
+                        {
+                            spToken: sparkContract.spTokens.DAI.address,
+                            amount: parseEther("700"),
+                            swapParams: {
+                                path: "0x",
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_SPARK_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        DAI: await mockCometUsds.collateralBalanceOf(user.address, tokenContracts.DAI.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = Zero;
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(sparkAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralsSpark: {
+                        DAI: await sparkContract.spTokens.DAI.balanceOf(user.address)
+                    },
+                    collateralsComet: {
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address),
+                        DAI: await mockCometUsds.collateralBalanceOf(user.address, tokenContracts.DAI.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
+                // Check user balances after migration - Spark
+                expect(userBalancesAfter.collateralsSpark.DAI).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.DAI).to.be.above(userBalancesBefore.collateralsComet.DAI);
+            });
+        });
+
+        context("* Morpho -> Comet | morphoUsdsAdapter", async () => {
+            it("Should migrate a user's position successfully: with swap position", async function () {
+                const { migrator, user, mocks, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, mockCometUsdt, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+
+                const supplyData = {
+                    WETH: { market: "USDS_WETH", supplyAmount: parseEther("500") }
+                };
+
+                // Setup for Morpho -> Comet migration
+                // Fund user with tokens
+                for (const [token, data] of Object.entries(supplyData)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(data.supplyAmount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: data.supplyAmount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(data.supplyAmount);
+                }
+
+                // Supply collateral to Morpho
+                for (const [token, data] of Object.entries(supplyData)) {
+                    const tokenContract = tokenContracts[token];
+                    const marketParams = morphoMarketParams[data.market];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(data.supplyAmount);
+
+                    await tokenContract.connect(user).approve(mockMorpho.address, data.supplyAmount);
+
+                    await mockMorpho
+                        .connect(user)
+                        .supplyCollateral(marketParams, data.supplyAmount, user.address, "0x");
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                }
+
+                const borrowAData = {
+                    USDS: { marketId: "USDS_WETH", borrowAmount: parseEther("100") }
+                };
+
+                for (const [token, data] of Object.entries(borrowAData)) {
+                    const tokenContract = tokenContracts[token];
+                    const marketParams = morphoMarketParams[data.marketId];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Borrow from Morpho
+                    await mocks.mockMorpho
+                        .connect(user)
+                        .borrow(marketParams, data.borrowAmount, 0, user.address, user.address);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(data.borrowAmount);
+                }
+
+                // Create migration position
+                const position = {
+                    borrows: [
+                        {
+                            marketId: morphoMarketIds.USDS_WETH,
+                            assetsAmount: borrowAData.USDS.borrowAmount,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountInMaximum: borrowAData.USDS.borrowAmount
+                            }
+                        }
+                    ],
+                    collaterals: [
+                        {
+                            marketId: morphoMarketIds.USDS_WETH,
+                            assetsAmount: supplyData.WETH.supplyAmount,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                amountOutMinimum: 0
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_MORPHO_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const userBalancesBefore = {
+                    collateralMorpho: {
+                        WETH: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).collateral
+                    },
+                    borrowMorpho: {
+                        USDS: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).borrowShares
+                    },
+                    collateralsComet: {
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+
+                logger("\nuserBalancesAfter", userBalancesBefore);
+
+                const flashAmount = parseEther("100");
+
+                // Execute migration
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(morphoUsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.emit(migrator, "MigrationExecuted");
+
+                const userBalancesAfter = {
+                    collateralMorpho: {
+                        WETH: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).collateral
+                    },
+                    borrowMorpho: {
+                        USDS: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).borrowShares
+                    },
+                    collateralsComet: {
+                        USDT: await mockCometUsdt.balanceOf(user.address)
+                    }
+                };
+                logger("\nuserBalancesAfter", userBalancesAfter);
+                // Check user balances after migration - Morpho
+                expect(userBalancesAfter.collateralMorpho.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowMorpho.USDS).to.be.equal(Zero);
+                // Check user balances after migration - Comet
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
+            });
+
             it("Should migrate a user's position successfully with: swap with proxy token", async function () {
                 const { migrator, user, mocks, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
 
                 const supplyData = {
                     WETH: { market: "USDT_WETH", supplyAmount: parseEther("500") }
@@ -3833,7 +6012,7 @@ describe("MigratorV2AndAaveV3", function () {
                     expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
 
                     // Borrow from Morpho
-                    await mocks.mockMorpho
+                    await mockMorpho
                         .connect(user)
                         .borrow(marketParams, data.borrowAmount, 0, user.address, user.address);
 
@@ -3848,9 +6027,9 @@ describe("MigratorV2AndAaveV3", function () {
                             assetsAmount: borrowAData.USDT.borrowAmount,
                             swapParams: {
                                 path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDT.address, 20),
                                     FEE_100,
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.USDT.address, 20)
+                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
                                 amountInMaximum: borrowAData.USDT.borrowAmount
                             }
@@ -3862,9 +6041,9 @@ describe("MigratorV2AndAaveV3", function () {
                             assetsAmount: supplyData.WETH.supplyAmount,
                             swapParams: {
                                 path: ethers.utils.concat([
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.WETH.address, 20),
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
                                     FEE_100,
-                                    ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
                                 ]),
                                 amountOutMinimum: 0
                             }
@@ -3880,17 +6059,17 @@ describe("MigratorV2AndAaveV3", function () {
 
                 const userBalancesBefore = {
                     collateralMorpho: {
-                        WETH: (await mocks.mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).collateral
+                        WETH: (await mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).collateral
                     },
                     borrowMorpho: {
-                        USDT: (await mocks.mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).borrowShares
+                        USDT: (await mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).borrowShares
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
                 const flashAmount = parseEther("100");
 
@@ -3898,20 +6077,21 @@ describe("MigratorV2AndAaveV3", function () {
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoUsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(morphoUsdsAdapter.address, mockCometUsds.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userBalancesAfter = {
                     collateralMorpho: {
-                        WETH: (await mocks.mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).collateral
+                        WETH: (await mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).collateral
                     },
                     borrowMorpho: {
-                        USDT: (await mocks.mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).borrowShares
+                        USDT: (await mockMorpho.position(morphoMarketIds.USDT_WETH, user.address)).borrowShares
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mockCometUsds.balanceOf(user.address)
                     }
                 };
+                logger("\nuserBalancesAfter", userBalancesAfter);
 
                 // Check user balances after migration - Morpho
                 expect(userBalancesAfter.collateralMorpho.WETH).to.be.equal(Zero);
@@ -3919,9 +6099,10 @@ describe("MigratorV2AndAaveV3", function () {
                 // Check user balances after migration - Comet
                 expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
             });
+
             it("Should migrate a user's position successfully with: without borrow position | convert tokens", async function () {
                 const { migrator, user, mocks, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
 
                 const supplyData = {
                     DAI: { market: "USDT_DAI", supplyAmount: parseEther("500") }
@@ -3986,23 +6167,19 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: (await mocks.mockMorpho.position(morphoMarketIds.USDT_DAI, user.address)).collateral
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
-                const flashAmount = parseEther("100");
-
-                console.log("Migrator address: ", migrator.address);
-                console.log("MorphoAdapter address: ", morphoUsdsAdapter.address);
-                console.log("Comet address: ", mocks.mockComet.address);
+                const flashAmount = Zero;
 
                 // Execute migration
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoUsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(morphoUsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userBalancesAfter = {
@@ -4010,7 +6187,7 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: (await mocks.mockMorpho.position(morphoMarketIds.USDT_DAI, user.address)).collateral
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
@@ -4021,7 +6198,7 @@ describe("MigratorV2AndAaveV3", function () {
             });
             it("Should migrate a user's position successfully with: without borrow position |  without swap and convert", async function () {
                 const { migrator, user, mocks, morphoUsdsAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
 
                 const supplyData = {
                     USDS: { market: "DAI_USDS", supplyAmount: parseEther("500") }
@@ -4083,23 +6260,19 @@ describe("MigratorV2AndAaveV3", function () {
                         USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesBefore", userBalancesBefore);
 
-                const flashAmount = parseEther("100");
-
-                console.log("Migrator address: ", migrator.address);
-                console.log("MorphoAdapter address: ", morphoUsdsAdapter.address);
-                console.log("Comet address: ", mocks.mockComet.address);
+                const flashAmount = Zero;
 
                 // Execute migration
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoUsdsAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(morphoUsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userBalancesAfter = {
@@ -4107,8 +6280,8 @@ describe("MigratorV2AndAaveV3", function () {
                         USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
@@ -4119,12 +6292,13 @@ describe("MigratorV2AndAaveV3", function () {
             });
         });
         context("* Morpho -> Comet | morphoAdapter", async () => {
-            it("Should migrate a user's position successfully with: convert token", async function () {
+            it("Should migrate a user's position successfully with: swap collateral and borrow position", async function () {
                 const { migrator, user, mocks, morphoAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+                const { tokenContracts, mockCometUsdt, mockMorpho, morphoMarketParams, morphoMarketIds, mockWETH } =
+                    mocks;
 
                 const supplyData = {
-                    USDS: { market: "DAI_USDS", supplyAmount: parseEther("500") }
+                    WETH: { market: "USDS_WETH", supplyAmount: parseEther("500") }
                 };
 
                 // Setup for Morpho -> Comet migration
@@ -4158,7 +6332,7 @@ describe("MigratorV2AndAaveV3", function () {
                 }
 
                 const borrowAData = {
-                    DAI: { marketId: "DAI_USDS", borrowAmount: parseEther("100") }
+                    USDS: { marketId: "USDS_WETH", borrowAmount: parseEther("100") }
                 };
 
                 for (const [token, data] of Object.entries(borrowAData)) {
@@ -4167,7 +6341,7 @@ describe("MigratorV2AndAaveV3", function () {
                     expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
 
                     // Borrow from Morpho
-                    await mocks.mockMorpho
+                    await mockMorpho
                         .connect(user)
                         .borrow(marketParams, data.borrowAmount, 0, user.address, user.address);
 
@@ -4178,23 +6352,28 @@ describe("MigratorV2AndAaveV3", function () {
                 const position = {
                     borrows: [
                         {
-                            marketId: morphoMarketIds.DAI_USDS,
-                            assetsAmount: borrowAData.DAI.borrowAmount,
+                            marketId: morphoMarketIds.USDS_WETH,
+                            assetsAmount: borrowAData.USDS.borrowAmount,
                             swapParams: {
                                 path: ethers.utils.concat([
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
-                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountInMaximum: borrowAData.DAI.borrowAmount
+                                amountInMaximum: borrowAData.USDS.borrowAmount
                             }
                         }
                     ],
                     collaterals: [
                         {
-                            marketId: morphoMarketIds.DAI_USDS,
-                            assetsAmount: supplyData.USDS.supplyAmount,
+                            marketId: morphoMarketIds.USDS_WETH,
+                            assetsAmount: supplyData.WETH.supplyAmount,
                             swapParams: {
-                                path: "0x",
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
                                 amountOutMinimum: 0
                             }
                         }
@@ -4209,53 +6388,52 @@ describe("MigratorV2AndAaveV3", function () {
 
                 const userBalancesBefore = {
                     collateralMorpho: {
-                        USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
+                        WETH: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).collateral
                     },
                     borrowMorpho: {
-                        DAI: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).borrowShares
+                        USDS: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).borrowShares
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesBefore", userBalancesBefore);
 
                 const flashAmount = parseEther("100");
-
-                console.log("Migrator address: ", migrator.address);
-                console.log("MorphoAdapter address: ", morphoAdapter.address);
-                console.log("Comet address: ", mocks.mockComet.address);
 
                 // Execute migration
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(morphoAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userBalancesAfter = {
                     collateralMorpho: {
-                        USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
+                        WETH: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).collateral
                     },
                     borrowMorpho: {
-                        DAI: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).borrowShares
+                        USDS: (await mockMorpho.position(morphoMarketIds.USDS_WETH, user.address)).borrowShares
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mockCometUsdt.collateralBalanceOf(user.address, mockWETH.address),
+                        USDT: await mockCometUsdt.balanceOf(user.address)
                     }
                 };
 
+                logger("\nuserBalancesAfter", userBalancesAfter);
+
                 // Check user balances after migration - Morpho
-                expect(userBalancesAfter.collateralMorpho.USDS).to.be.equal(Zero);
-                expect(userBalancesAfter.borrowMorpho.DAI).to.be.equal(Zero);
+                expect(userBalancesAfter.collateralMorpho.WETH).to.be.equal(Zero);
+                expect(userBalancesAfter.borrowMorpho.USDS).to.be.equal(Zero);
                 // Check user balances after migration - Comet
-                expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+                expect(userBalancesAfter.collateralsComet.USDT).to.be.above(userBalancesBefore.collateralsComet.USDT);
             });
-            it("Should migrate a user's position successfully with: without borrow position | convert tokens", async function () {
+            it("Should migrate a user's position successfully: without borrow position | convert tokens", async function () {
                 const { migrator, user, mocks, morphoAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
 
                 const supplyData = {
                     DAI: { market: "USDT_DAI", supplyAmount: parseEther("500") }
@@ -4320,18 +6498,18 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: (await mocks.mockMorpho.position(morphoMarketIds.USDT_DAI, user.address)).collateral
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
-                const flashAmount = parseEther("100");
+                const flashAmount = Zero;
                 // Execute migration
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(morphoAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userBalancesAfter = {
@@ -4339,7 +6517,7 @@ describe("MigratorV2AndAaveV3", function () {
                         DAI: (await mocks.mockMorpho.position(morphoMarketIds.USDT_DAI, user.address)).collateral
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
@@ -4350,7 +6528,7 @@ describe("MigratorV2AndAaveV3", function () {
             });
             it("Should migrate a user's position successfully with: without borrow position |  without swap and convert", async function () {
                 const { migrator, user, mocks, morphoAdapter } = await loadFixture(setupTestEnvironment);
-                const { tokenContracts, mockComet, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
+                const { tokenContracts, mockCometUsds, mockMorpho, morphoMarketParams, morphoMarketIds } = mocks;
 
                 const supplyData = {
                     USDS: { market: "DAI_USDS", supplyAmount: parseEther("500") }
@@ -4412,19 +6590,18 @@ describe("MigratorV2AndAaveV3", function () {
                         USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
                     },
                     collateralsComet: {
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 
-                console.log("\nuserBalancesBefore", userBalancesBefore);
+                logger("\nuserBalancesAfter", userBalancesBefore);
 
-                const flashAmount = parseEther("100");
-
+                const flashAmount = Zero;
                 // Execute migration
                 await expect(
                     migrator
                         .connect(user)
-                        .migrate(morphoAdapter.address, mocks.mockComet.address, migrationData, flashAmount)
+                        .migrate(morphoAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                 ).to.emit(migrator, "MigrationExecuted");
 
                 const userBalancesAfter = {
@@ -4432,8 +6609,8 @@ describe("MigratorV2AndAaveV3", function () {
                         USDS: (await mocks.mockMorpho.position(morphoMarketIds.DAI_USDS, user.address)).collateral
                     },
                     collateralsComet: {
-                        WETH: await mocks.mockComet.collateralBalanceOf(user.address, mocks.mockWETH.address),
-                        USDS: await mocks.mockComet.balanceOf(user.address)
+                        WETH: await mocks.mockCometUsds.collateralBalanceOf(user.address, mocks.mockWETH.address),
+                        USDS: await mocks.mockCometUsds.balanceOf(user.address)
                     }
                 };
 

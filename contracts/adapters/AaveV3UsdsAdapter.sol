@@ -12,9 +12,7 @@ import {IAToken} from "../interfaces/aave/IAToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
-import {IWETH9} from "../interfaces/IWETH9.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
-import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /**
  * @title AaveV3UsdsAdapter
@@ -68,7 +66,7 @@ import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
  *      - Only DAI ⇄ USDS conversions are supported (for USDS-based Comet markets).
  *      - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
  */
-contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, DelegateReentrancyGuard {
+contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
 
     using SafeERC20 for IERC20;
@@ -81,7 +79,6 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      * @param daiUsdsConverter Address of the DAI-USDS converter contract.
      * @param dai Address of the DAI token.
      * @param usds Address of the USDS token.
-     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH).
      * @param aaveLendingPool Address of the Aave V3 Lending Pool.
      * @param aaveDataProvider Address of the Aave V3 Data Provider.
      * @param isFullMigration Flag indicating whether the migration requires all debt to be cleared.
@@ -91,7 +88,6 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         address daiUsdsConverter;
         address dai;
         address usds;
-        address wrappedNativeToken;
         address aaveLendingPool;
         address aaveDataProvider;
         bool isFullMigration;
@@ -133,11 +129,7 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
 
     /// --------Constants-------- ///
 
-    /// @notice Address of the native token (e.g., ETH)
-    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
-    /// @notice Address of the wrapped native token (e.g., WETH).
-    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
+    uint8 private constant CONVERT_PATH_LENGTH = 40;
 
     /// @notice Interest rate mode for variable-rate borrowings in Aave V3 (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
@@ -176,16 +168,12 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         SwapModule(deploymentParams.uniswapRouter)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
-        if (
-            deploymentParams.aaveLendingPool == address(0) ||
-            deploymentParams.wrappedNativeToken == address(0) ||
-            deploymentParams.aaveDataProvider == address(0)
-        ) revert InvalidZeroAddress();
+        if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.aaveDataProvider == address(0))
+            revert InvalidZeroAddress();
 
         LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
         DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
-        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -219,7 +207,7 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         address comet,
         bytes calldata migrationData,
         bytes calldata flashloanData
-    ) external nonReentrant {
+    ) external {
         // Decode the migration data into an AaveV3Position struct
         AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
 
@@ -341,9 +329,19 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         if (borrow.swapParams.path.length > 0) {
             address tokenIn = _decodeTokenIn(borrow.swapParams.path);
             address tokenOut = _decodeTokenOut(borrow.swapParams.path);
-            // If the swap is from DAI to USDS, convert DAI to USDS
-            if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
-                // Convert DAI to USDS and repay the borrow
+            if (
+                tokenIn == ConvertModule.USDS &&
+                tokenOut == ConvertModule.DAI &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
+                // Convert USDS to DAI for repayment
+                _convertUsdsToDai(repayAmount);
+            } else if (
+                tokenIn == ConvertModule.DAI &&
+                tokenOut == ConvertModule.USDS &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
+                // Convert DAI to USDS for repayment
                 _convertDaiToUsds(repayAmount);
             } else {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
@@ -455,13 +453,6 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
                     IComet(comet).supplyTo(user, tokenOut, amountOut);
                 }
             }
-            // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == NATIVE_TOKEN) {
-            // Wrap the native token
-            WRAPPED_NATIVE_TOKEN.deposit{value: aTokenAmount}();
-            // Approve the wrapped native token to be spent by Comet
-            WRAPPED_NATIVE_TOKEN.approve(comet, aTokenAmount);
-            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), aTokenAmount);
             // If no swap is required, supply the collateral directly to Comet
         } else if (underlyingAsset == ConvertModule.DAI && baseToken == ConvertModule.USDS) {
             _convertDaiToUsds(aTokenAmount);

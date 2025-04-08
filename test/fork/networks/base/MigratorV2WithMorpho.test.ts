@@ -10,7 +10,7 @@ import {
     setBalance,
     parseUnits,
     loadFixture,
-    log,
+    logger,
     BigNumber
 } from "../../../helpers"; // Adjust the path as needed
 
@@ -135,7 +135,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
         const MorphoAdapterFactory = await ethers.getContractFactory("MorphoAdapter", owner);
         const morphoAdapter = (await MorphoAdapterFactory.connect(owner).deploy({
             uniswapRouter: uniswapContractAddresses.router,
-            wrappedNativeToken: tokenAddresses.WETH,
+            // wrappedNativeToken: tokenAddresses.WETH,
             morphoLendingPool: morphoContractAddresses.pool,
             isFullMigration: true
         })) as MorphoAdapter;
@@ -213,6 +213,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -285,7 +286,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 // Setup the borrows to be migrated
@@ -373,7 +374,6 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 ["tuple(" + POSITION_ABI.join(",") + ")"],
                 [[position.borrows, position.collaterals]]
             );
-            console.log("STARTING TEST");
 
             const flashAmount = parseUnits("435", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
 
@@ -412,7 +412,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowMorpho.WETH).to.be.equal(Zero);
@@ -454,6 +454,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -526,7 +527,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -598,7 +599,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // part of the borrows should be closed
             expect(userBalancesAfter.borrowMorpho.WETH).to.be.equal(Zero);
@@ -639,6 +640,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -705,7 +707,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 // Setup the borrows to be migrated
@@ -804,7 +806,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowMorpho.USDC).to.be.equal(Zero);
@@ -841,6 +843,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -903,7 +906,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -965,7 +968,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowMorpho.USDC).to.be.equal(Zero);
@@ -999,6 +1002,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1059,7 +1063,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1125,7 +1129,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowMorpho.WETH).to.be.equal(Zero);
@@ -1159,6 +1163,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1219,7 +1224,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1291,7 +1296,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowMorpho.EURC).to.be.equal(Zero);
@@ -1325,6 +1330,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1387,7 +1393,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1455,7 +1461,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowMorpho.USDC).to.be.equal(Zero);
@@ -1490,6 +1496,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1550,7 +1557,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1632,7 +1639,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowMorpho.USDC).to.be.equal(Zero);
@@ -1669,6 +1676,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1715,7 +1723,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -1775,7 +1783,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsMorpho.cbBTC).to.be.equal(Zero);
@@ -1810,6 +1818,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1853,7 +1862,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -1907,7 +1916,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsMorpho.cbBTC).to.be.equal(Zero);
@@ -1940,6 +1949,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1986,7 +1996,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -2058,7 +2068,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsMorpho.cbETH).to.be.equal(Zero);

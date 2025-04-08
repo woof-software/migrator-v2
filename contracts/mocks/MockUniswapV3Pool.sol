@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {IUniswapV3FlashCallback} from "../interfaces/@uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {NegativeTesting} from "./NegativeTesting.sol";
 
 interface IMigratorV2 {
     function migrate(address adapter, address comet, bytes calldata migrationData, uint256 flashAmount) external;
@@ -12,16 +13,7 @@ interface IFakeUniswapV3Pool {
     function flash(address recipient, uint256 amount0, uint256 amount1, bytes calldata data) external;
 }
 
-contract MockUniswapV3Pool {
-    enum NegativeTest {
-        None,
-        Reentrant,
-        InvalidCallbackData,
-        FakeUniswapV3Pool
-    }
-
-    NegativeTest public negativeTest = NegativeTest.None;
-
+contract MockUniswapV3Pool is NegativeTesting {
     address public fakeUniswapV3Pool;
 
     address public token0;
@@ -32,10 +24,6 @@ contract MockUniswapV3Pool {
         require(_token1 != address(0), "Invalid token1 address");
         token0 = _token0;
         token1 = _token1;
-    }
-
-    function setNegativeTest(NegativeTest _negativeTest) external {
-        negativeTest = _negativeTest;
     }
 
     function setFakeUniswapV3Pool(address _fakeUniswapV3Pool) external {

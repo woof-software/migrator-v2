@@ -2,8 +2,11 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {NegativeTesting} from "../NegativeTesting.sol";
+import {SharesMathLib} from "../../libs/morpho/SharesMathLib.sol";
 
-contract MockMorpho {
+contract MockMorpho is NegativeTesting {
+    using SharesMathLib for uint256;
     type Id is bytes32;
 
     struct MarketParams {
@@ -30,9 +33,17 @@ contract MockMorpho {
     }
 
     mapping(Id => Market) public market;
-    mapping(Id => mapping(address => Position)) public position;
+    mapping(Id => mapping(address => Position)) private _position;
     mapping(Id => MarketParams) public idToMarketParams;
     mapping(address => uint256) public nonce;
+
+    function position(Id id, address user) external view returns (Position memory) {
+        Position memory pos = _position[id][user];
+        if (negativeTest == NegativeTest.DebtNotCleared) {
+            pos.borrowShares = 1;
+        }
+        return pos;
+    }
 
     /// @notice Sets market parameters for a given market ID
     function setMarketParams(MarketParams memory marketParams) external {
@@ -57,7 +68,9 @@ contract MockMorpho {
         IERC20(marketParams.collateralToken).transferFrom(msg.sender, address(this), assets);
 
         Id id = Id.wrap(keccak256(abi.encode(marketParams)));
-        position[id][onBehalf].collateral += uint128(assets);
+        _position[id][onBehalf].collateral += uint128(assets);
+
+        market[id].totalSupplyAssets += uint128(assets);
     }
 
     function withdrawCollateral(
@@ -68,14 +81,14 @@ contract MockMorpho {
     ) external {
         require(receiver != address(0), "Invalid receiver");
         require(
-            position[Id.wrap(keccak256(abi.encode(marketParams)))][onBehalf].collateral >= assets,
+            _position[Id.wrap(keccak256(abi.encode(marketParams)))][onBehalf].collateral >= assets,
             "Insufficient collateral"
         );
 
         IERC20(marketParams.collateralToken).transfer(receiver, assets);
 
         Id id = Id.wrap(keccak256(abi.encode(marketParams)));
-        position[id][onBehalf].collateral -= uint128(assets);
+        _position[id][onBehalf].collateral -= uint128(assets);
     }
 
     function borrow(
@@ -93,7 +106,7 @@ contract MockMorpho {
 
         Id id = Id.wrap(keccak256(abi.encode(marketParams)));
         market[id].totalBorrowAssets += uint128(assets);
-        position[id][onBehalf].borrowShares += uint128(assets);
+        _position[id][onBehalf].borrowShares += uint128(assets);
         return (assets, assets);
     }
 
@@ -105,19 +118,19 @@ contract MockMorpho {
         bytes calldata
     ) external returns (uint256, uint256) {
         // require(assets > 0, "Invalid assets");
-        uint256 amount = assets == 0 ? shares : assets;
+        uint256 amount = assets;
         // Transfer repayment assets from the user to this contract
         IERC20(marketParams.loanToken).transferFrom(msg.sender, address(this), amount);
 
         Id id = Id.wrap(keccak256(abi.encode(marketParams)));
-        require(position[id][onBehalf].borrowShares >= amount, "Insufficient borrow");
+        require(_position[id][onBehalf].borrowShares >= amount, "Insufficient borrow");
 
-        position[id][onBehalf].borrowShares -= uint128(amount);
+        _position[id][onBehalf].borrowShares -= uint128(amount);
         market[id].totalBorrowAssets -= uint128(amount);
         return (assets, shares);
     }
 
-    function accrueInterest(MarketParams memory marketParams) external {
+    function accrueInterest(MarketParams memory marketParams) public {
         Id id = Id.wrap(keccak256(abi.encode(marketParams)));
         market[id].lastUpdate = uint128(block.timestamp);
     }

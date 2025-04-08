@@ -294,13 +294,13 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
         address comet,
         bytes calldata migrationData,
         uint256 flashAmount
-    ) external nonReentrant validAdapter(adapter) validComet(comet) {
+    ) external nonReentrant validAdapter(adapter) validComet(comet) whenNotPaused {
         if (migrationData.length == 0) revert InvalidMigrationData();
 
         address user = msg.sender;
 
         bytes memory callbackData = abi.encode(user, adapter, comet, migrationData, flashAmount);
-
+        // Hash the callback data to validate it later
         _storedCallbackHash = keccak256(callbackData);
 
         FlashData memory flashData = _flashData[comet];
@@ -313,15 +313,13 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
                 callbackData
             );
         } else {
-            bytes memory flashloanData = abi.encode(flashData.liquidityPool, flashData.baseToken, 0);
-
             (bool success, bytes memory result) = adapter.delegatecall(
                 abi.encodeWithSelector(
                     IProtocolAdapter.executeMigration.selector,
                     user,
                     comet,
                     migrationData,
-                    flashloanData
+                    new bytes(0)
                 )
             );
 
@@ -333,12 +331,12 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
                 } else {
                     revert("Delegatecall failed");
                 }
+            } else {
+                emit MigrationExecuted(adapter, user, comet, 0, 0);
             }
-
-            _storedCallbackHash = bytes32(0);
-
-            emit MigrationExecuted(adapter, user, comet, 0, 0);
         }
+        // Clear the stored callback hash
+        _storedCallbackHash = bytes32(0);
     }
 
     /**
@@ -411,9 +409,9 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
             } else {
                 revert DelegatecallFailed();
             }
+        } else {
+            emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
         }
-
-        emit MigrationExecuted(adapter, user, comet, flashAmount, (flashAmountWithFee - flashAmount));
     }
 
     /// --------Owner Functions-------- ///
@@ -433,7 +431,7 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
      * @param adapter Address of the adapter to remove.
      * @dev Ensures that the adapter is currently registered before removal.
      */
-    function removeAdapter(address adapter) external onlyOwner {
+    function removeAdapter(address adapter) external onlyOwner whenPaused {
         _removeAdapter(adapter);
     }
 

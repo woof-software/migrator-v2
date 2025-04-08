@@ -12,8 +12,6 @@ import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
-import {IWETH9} from "../interfaces/IWETH9.sol";
-import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /**
  * @title SparkUsdsAdapter
@@ -49,7 +47,7 @@ import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
  *      - No support for stable-rate debt.
  *      - Contract must be called via delegatecall and not directly.
  */
-contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, DelegateReentrancyGuard {
+contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
 
     using SafeERC20 for IERC20;
@@ -62,7 +60,6 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
      * @param daiUsdsConverter Address of the DAI-USDS converter contract.
      * @param dai Address of the DAI token.
      * @param usds Address of the USDS token.
-     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH).
      * @param sparkLendingPool Address of the Spark Lending Pool.
      * @param sparkDataProvider Address of the Spark Data Provider.
      * @param isFullMigration Flag indicating whether the migration requires all debt to be cleared.
@@ -72,7 +69,6 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
         address daiUsdsConverter;
         address dai;
         address usds;
-        address wrappedNativeToken;
         address sparkLendingPool;
         address sparkDataProvider;
         bool isFullMigration;
@@ -114,11 +110,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
 
     /// --------Constants-------- ///
 
-    /// @notice Address of the native token (e.g., ETH)
-    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
-    /// @notice Address of the wrapped native token (e.g., WETH).
-    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
+    uint8 private constant CONVERT_PATH_LENGTH = 40;
 
     /// @notice Interest rate mode for variable-rate borrowings in Spark (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
@@ -146,7 +138,6 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
      * - daiUsdsConverter Address of the DAI to USDS converter contract
      * - dai Address of the DAI token
      * - usds Address of the USDS token
-     * - wrappedNativeToken Address of the wrapped native token (e.g., WETH)
      * - sparkLendingPool Address of the Spark Lending Pool contract
      * - sparkDataProvider Address of the Spark Data Provider contract
      * - isFullMigration Boolean indicating whether the migration is full or partial
@@ -158,13 +149,12 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
         SwapModule(deploymentParams.uniswapRouter)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
-        if (deploymentParams.sparkLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
+        if (deploymentParams.sparkLendingPool == address(0) || deploymentParams.sparkDataProvider == address(0))
             revert InvalidZeroAddress();
 
         LENDING_POOL = ISparkPool(deploymentParams.sparkLendingPool);
         DATA_PROVIDER = ISparkPoolDataProvider(deploymentParams.sparkDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
-        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -201,7 +191,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
         address comet,
         bytes calldata migrationData,
         bytes calldata flashloanData
-    ) external nonReentrant {
+    ) external {
         // Decode the migration data into an SparkPosition struct
         SparkPosition memory position = abi.decode(migrationData, (SparkPosition));
 
@@ -319,10 +309,21 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
         if (borrow.swapParams.path.length > 0) {
             address tokenIn = _decodeTokenIn(borrow.swapParams.path);
             address tokenOut = _decodeTokenOut(borrow.swapParams.path);
-            // If the swap is from USDS to DAI, convert USDS to DAI
-            if (tokenIn == ConvertModule.USDS && tokenOut == ConvertModule.DAI) {
+
+            if (
+                tokenIn == ConvertModule.USDS &&
+                tokenOut == ConvertModule.DAI &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
                 // Convert USDS to DAI for repayment
                 _convertUsdsToDai(repayAmount);
+            } else if (
+                tokenIn == ConvertModule.DAI &&
+                tokenOut == ConvertModule.USDS &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
+                // Convert DAI to USDS for repayment
+                _convertDaiToUsds(repayAmount);
             } else {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
                 _swapFlashloanToBorrowToken(
@@ -426,13 +427,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Delega
                     IComet(comet).supplyTo(user, tokenOut, amountOut);
                 }
             }
-            // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == NATIVE_TOKEN) {
-            // Wrap the native token
-            WRAPPED_NATIVE_TOKEN.deposit{value: spTokenAmount}();
-            // Approve the wrapped native token to be spent by Comet
-            WRAPPED_NATIVE_TOKEN.approve(comet, spTokenAmount);
-            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), spTokenAmount);
+
             // If no swap is required, supply the collateral directly to Comet
         } else {
             IERC20(underlyingAsset).safeIncreaseAllowance(comet, spTokenAmount);

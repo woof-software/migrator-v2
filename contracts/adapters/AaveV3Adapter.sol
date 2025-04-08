@@ -11,8 +11,6 @@ import {IAToken} from "../interfaces/aave/IAToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
-import {IWETH9} from "../interfaces/IWETH9.sol";
-import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /**
  * @title AaveV3Adapter
@@ -58,7 +56,7 @@ import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
  *      - Requires accurate swap paths and limits for safe execution.
  *      - Relies on delegatecall from `MigratorV2` to function correctly.
  */
-contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
+contract AaveV3Adapter is IProtocolAdapter, SwapModule {
     /// -------- Libraries -------- ///
 
     using SafeERC20 for IERC20;
@@ -68,14 +66,12 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
     /**
      * @notice Initializes the AaveV3Adapter contract
      * @param uniswapRouter Address of the Uniswap V3 SwapRouter contract
-     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH)
      * @param aaveLendingPool Address of the Aave V3 Lending Pool contract
      * @param aaveDataProvider Address of the Aave V3 Data Provider contract
      * @param isFullMigration Boolean indicating whether the migration is a full migration
      */
     struct DeploymentParams {
         address uniswapRouter;
-        address wrappedNativeToken;
         address aaveLendingPool;
         address aaveDataProvider;
         bool isFullMigration;
@@ -115,13 +111,6 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
 
     /// --------Constants-------- ///
 
-    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
-    /**
-     * @notice Address of the wrapped native token (e.g., WETH).
-     */
-    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
-
     /// @notice Interest rate mode for variable-rate borrowings in Aave V3 (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
 
@@ -157,13 +146,12 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
      * @dev Reverts if any of the provided addresses are zero
      */
     constructor(DeploymentParams memory deploymentParams) SwapModule(deploymentParams.uniswapRouter) {
-        if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
+        if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.aaveDataProvider == address(0))
             revert InvalidZeroAddress();
 
         LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
         DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
-        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -197,7 +185,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
         address comet,
         bytes calldata migrationData,
         bytes calldata flashloanData
-    ) external nonReentrant {
+    ) external {
         // Decode the migration data into an AaveV3Position struct
         AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
 
@@ -401,14 +389,6 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard 
             IComet(comet).supplyTo(user, tokenOut, amountOut);
             return;
 
-            // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == NATIVE_TOKEN) {
-            // Wrap the native token
-            WRAPPED_NATIVE_TOKEN.deposit{value: aTokenAmount}();
-            // Approve the wrapped native token to be spent by Comet
-            WRAPPED_NATIVE_TOKEN.approve(comet, aTokenAmount);
-            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), aTokenAmount);
-            return;
             // If no swap is required, supply the collateral directly to Comet
         } else {
             IERC20(underlyingAsset).safeIncreaseAllowance(comet, aTokenAmount);

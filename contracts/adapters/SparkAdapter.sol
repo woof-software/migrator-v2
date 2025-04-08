@@ -11,8 +11,6 @@ import {ISpToken} from "../interfaces/spark/ISpToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
-import {IWETH9} from "../interfaces/IWETH9.sol";
-import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /**
  * @title SparkAdapter
@@ -59,7 +57,7 @@ import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
  *      - No direct support for native ETH deposits into Compound III; all wrapped as WETH.
  *      - Intended for use only via delegatecall from `MigratorV2`.
  */
-contract SparkAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
+contract SparkAdapter is IProtocolAdapter, SwapModule {
     /// -------- Libraries -------- ///
 
     using SafeERC20 for IERC20;
@@ -72,14 +70,12 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
      * @param daiUsdsConverter Address of the DAI to USDS converter contract
      * @param dai Address of the DAI token
      * @param usds Address of the USDS token
-     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH)
      * @param sparkLendingPool Address of the Spark Lending Pool contract
      * @param sparkDataProvider Address of the Spark Data Provider contract
      * @param isFullMigration Boolean indicating whether the migration is full or partial
      */
     struct DeploymentParams {
         address uniswapRouter;
-        address wrappedNativeToken;
         address sparkLendingPool;
         address sparkDataProvider;
         bool isFullMigration;
@@ -118,13 +114,6 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
     }
 
     /// --------Constants-------- ///
-
-    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-
-    /**
-     * @notice Address of the wrapped native token (e.g., WETH).
-     */
-    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
 
     /// @notice Interest rate mode for variable-rate borrowings in Spark (2 represents variable rate)
     uint256 public constant INTEREST_RATE_MODE = 2;
@@ -165,13 +154,12 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
      * @dev Reverts if any of the provided addresses are zero
      */
     constructor(DeploymentParams memory deploymentParams) SwapModule(deploymentParams.uniswapRouter) {
-        if (deploymentParams.sparkLendingPool == address(0) || deploymentParams.wrappedNativeToken == address(0))
+        if (deploymentParams.sparkLendingPool == address(0) || deploymentParams.sparkDataProvider == address(0))
             revert InvalidZeroAddress();
 
         LENDING_POOL = ISparkPool(deploymentParams.sparkLendingPool);
         DATA_PROVIDER = ISparkPoolDataProvider(deploymentParams.sparkDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
-        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -213,7 +201,7 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
         address comet,
         bytes calldata migrationData,
         bytes calldata flashloanData
-    ) external nonReentrant {
+    ) external {
         // Decode the migration data into an SparkPosition struct
         SparkPosition memory position = abi.decode(migrationData, (SparkPosition));
 
@@ -417,14 +405,6 @@ contract SparkAdapter is IProtocolAdapter, SwapModule, DelegateReentrancyGuard {
             );
             IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
             IComet(comet).supplyTo(user, tokenOut, amountOut);
-
-            // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == NATIVE_TOKEN) {
-            // Wrap the native token
-            WRAPPED_NATIVE_TOKEN.deposit{value: spTokenAmount}();
-            // Approve the wrapped native token to be spent by Comet
-            WRAPPED_NATIVE_TOKEN.approve(comet, spTokenAmount);
-            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), spTokenAmount);
 
             // If no swap is required, supply the collateral directly to Comet
         } else {

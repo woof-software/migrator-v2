@@ -2,7 +2,7 @@
 
 pragma solidity 0.8.28;
 
-import "hardhat/console.sol";
+import {NegativeTesting} from "./NegativeTesting.sol";
 
 interface IQuoterV2 {
     function quoteExactInput(
@@ -34,14 +34,17 @@ interface IUniswapV3Factory {
     function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
 }
 
-contract MockQuoterV2 is IQuoterV2, IUniswapV3Factory {
-    /// @notice Available Uniswap V3 fee tiers.
-    // uint256[] public availableFeeTiers = [100, 500, 3000, 10000];
-
+contract MockQuoterV2 is IQuoterV2, IUniswapV3Factory, NegativeTesting {
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
-    function getPool(address tokenA, address tokenB, uint24 fee) external view override returns (address pool) {
-        // return address(tokenA);
+    function getPool(
+        address /*tokenA*/,
+        address /*tokenB*/,
+        uint24 /*fee*/
+    ) external view override returns (address pool) {
+        if (negativeTest == NegativeTest.InvalidPoll) {
+            return address(0);
+        }
         return address(1);
     }
 
@@ -59,11 +62,7 @@ contract MockQuoterV2 is IQuoterV2, IUniswapV3Factory {
             uint256 gasEstimate
         )
     {
-        console.log("---> TEST__1");
         (uint256 fee1, uint256 fee2) = _decodePoolFeeFromPath(path);
-
-        console.log("---> FEE_1: %s", fee1);
-        console.log("---> FEE_2: %s", fee2);
 
         if (fee1 == 3000) {
             amountOut = (amountIn * 105) / 100;
@@ -87,12 +86,7 @@ contract MockQuoterV2 is IQuoterV2, IUniswapV3Factory {
             uint256 gasEstimate
         )
     {
-        console.log("---> TEST__2");
-
         (uint256 fee1, uint256 fee2) = _decodePoolFeeFromPath(path);
-
-        console.log("---> FEE_1: %s", fee1);
-        console.log("---> FEE_2: %s", fee2);
 
         if (fee1 == 3000 || fee2 == 3000) {
             amountIn = (amountOut * 95) / 100;
@@ -108,6 +102,5 @@ contract MockQuoterV2 is IQuoterV2, IUniswapV3Factory {
             fee1 := mload(add(path, 23))
             fee2 := mload(add(path, 46))
         }
-        // console.log("---> FEE: %s", fee);
     }
 }

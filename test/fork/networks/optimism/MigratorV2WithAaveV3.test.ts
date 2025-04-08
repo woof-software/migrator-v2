@@ -10,7 +10,7 @@ import {
     setBalance,
     parseUnits,
     loadFixture,
-    log,
+    logger,
     AddressZero,
     formatUnits
 } from "../../../helpers"; // Adjust the path as needed
@@ -88,7 +88,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
         const treasuryAddresses: Record<string, string> = {
             WBTC: "0x1eED63EfBA5f81D95bfe37d82C8E736b974F477b",
             DAI: "0x1eED63EfBA5f81D95bfe37d82C8E736b974F477b",
-            USDC: "0xF977814e90dA44bFA03b6295A0616a897441aceC",
+            USDC: "0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0",
             USDT: "0xacD03D601e5bB1B275Bb94076fF46ED9D753435A",
             WETH: "0x86Bb63148d17d445Ed5398ef26Aa05Bf76dD5b59",
             LINK: "0x0172e05392aba65366C4dbBb70D958BbF43304E4"
@@ -161,7 +161,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
         const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", owner);
         const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
             uniswapRouter: uniswapContractAddresses.router,
-            wrappedNativeToken: tokenAddresses.WETH,
+            // wrappedNativeToken: tokenAddresses.WETH,
             aaveLendingPool: aaveContractAddresses.pool,
             aaveDataProvider: aaveContractAddresses.protocolDataProvider,
             isFullMigration: true
@@ -222,67 +222,6 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
     }
 
     context("Migrate positions from AaveV3 to Compound III", function () {
-        it.only("Scn.#00: uniswapV3PathFinder | DAI to USDS", async function () {
-            const { tokenAddresses, tokenDecimals, migratorV2, user, uniswapContractAddresses } = await loadFixture(
-                setupEnv
-            );
-
-            const connectors = [
-                "0x4200000000000000000000000000000000000006", // WETH 18 decimals
-                "0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb" // wstETH 18 decimals
-            ];
-
-            const tokenIn = "0x4200000000000000000000000000000000000042"; // OP 18 decimals
-            const tokenOut = "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58"; // USDT 6 decimals
-
-            const amountIn = 300002552632n; // 0,000000300002552632
-            // const amountIn = 0n;
-            const amountOut = 0n;
-            // const amountOut = 115638267972963n;
-
-            // const UniswapV3PathFinder_ = await ethers.getContractFactory("UniswapV3PathFinder");
-            // const pathFinder_ = (await UniswapV3PathFinder_.connect(user).deploy(
-            //     uniswapContractAddresses.factory,
-            //     uniswapContractAddresses.quoterV2,
-            //     AddressZero,
-            //     AddressZero
-            // )) as UniswapV3PathFinder;
-
-            const pathFinder_ = UniswapV3PathFinder__factory.connect(
-                "0x70395912F72861FD42cA33Ce671bC936E5f29dCF",
-                user
-            );
-
-            const maxGasEstimate = 5000000n;
-
-            // const singlePathExpectIn = await pathFinder_.callStatic.getBestSingleSwapPath(
-            //     {
-            //         tokenIn: tokenIn,
-            //         tokenOut: tokenOut,
-            //         amountIn: Zero,
-            //         amountOut: amountIn,
-            //         excludedPool: AddressZero,
-            //         maxGasEstimate
-            //     },
-            //     { gasLimit: 30000000 }
-            // );
-            const multiPathExpectIn = await pathFinder_.callStatic.getBestMultiSwapPath(
-                {
-                    tokenIn,
-                    tokenOut,
-                    connectors,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                },
-                { gasLimit: 30000000 }
-            );
-
-            console.log("^^multiPathExpectIn:", multiPathExpectIn);
-            console.log("^^bestAmountOut:", formatUnits(multiPathExpectIn.estimatedAmount, 6));
-        }).timeout(0);
-
         it("Scn.#1: migration of all collaterals | three collateral (incl. Native Token) and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
             const {
                 user,
@@ -310,6 +249,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -385,7 +325,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -503,7 +443,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -546,6 +486,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -608,7 +549,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -678,7 +619,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.not.equal(Zero);
@@ -720,6 +661,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -792,7 +734,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -885,7 +827,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // all borrows should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -923,6 +865,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -978,7 +921,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1037,7 +980,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -1073,6 +1016,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1128,7 +1072,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1191,7 +1135,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -1227,6 +1171,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1284,7 +1229,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1356,7 +1301,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -1393,6 +1338,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1448,7 +1394,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1515,7 +1461,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
@@ -1551,6 +1497,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1606,7 +1553,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1669,7 +1616,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -1706,6 +1653,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1762,7 +1710,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [
@@ -1837,7 +1785,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // borrow should be closed
             expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
@@ -1873,6 +1821,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -1917,7 +1866,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -1973,7 +1922,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
@@ -2008,6 +1957,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2052,7 +2002,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -2116,7 +2066,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);
@@ -2151,6 +2101,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             for (const [token, amount] of Object.entries(fundingData)) {
                 const tokenContract = tokenContracts[token];
                 const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
 
                 await setBalance(treasuryAddress, parseEther("1000"));
                 await impersonateAccount(treasuryAddress);
@@ -2195,7 +2146,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesBefore:", userBalancesBefore);
+            logger("userBalancesBefore:", userBalancesBefore);
 
             const position = {
                 borrows: [],
@@ -2261,7 +2212,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 }
             };
 
-            log("userBalancesAfter:", userBalancesAfter);
+            logger("userBalancesAfter:", userBalancesAfter);
 
             // collateral should be migrated
             expect(userBalancesAfter.collateralsAave.WBTC).to.be.equal(Zero);

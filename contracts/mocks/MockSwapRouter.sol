@@ -3,8 +3,16 @@ pragma solidity 0.8.28;
 
 import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {NegativeTesting} from "./NegativeTesting.sol";
 
-// import "hardhat/console.sol";
+interface IAdapter {
+    function executeMigration(
+        address user,
+        address comet,
+        bytes calldata migrationData,
+        bytes calldata flashloanData
+    ) external;
+}
 
 /**
  * @title MockSwapRouter
@@ -12,18 +20,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev This mock does not perform actual price calculations or route through multiple pools.
  *      It assumes a 1:1 swap rate between tokens for simplicity.
  */
-contract MockSwapRouter is ISwapRouter {
+contract MockSwapRouter is ISwapRouter, NegativeTesting {
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
-    bool public testingNegativeScenarioOne;
-    bool public testingNegativeScenarioTwo;
+    address public adapter;
 
-    function setTestingNegativeScenarioOne(bool _testingNegativeScenario) external {
-        testingNegativeScenarioOne = _testingNegativeScenario;
+    function setAdapter(address _adapter) external {
+        adapter = _adapter;
     }
 
-    function setTestingNegativeScenarioTwo(bool _testingNegativeScenario) external {
-        testingNegativeScenarioTwo = _testingNegativeScenario;
+    function _reentrant() internal {
+        IAdapter(adapter).executeMigration(msg.sender, address(this), "", "");
     }
 
     /**
@@ -35,9 +42,14 @@ contract MockSwapRouter is ISwapRouter {
     function exactInputSingle(
         ExactInputSingleParams calldata params
     ) external payable override returns (uint256 amountOut) {
-        if (testingNegativeScenarioOne) {
+        if (negativeTest == NegativeTest.SwapRouterNotSupported) {
             revert("Negative scenario");
         }
+
+        if (negativeTest == NegativeTest.Reentrant) {
+            _reentrant();
+        }
+
         // Transfer tokenIn from caller
         IERC20(params.tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
 
@@ -56,8 +68,12 @@ contract MockSwapRouter is ISwapRouter {
      * @return amountOut The amount of the received token.
      */
     function exactInput(ExactInputParams calldata params) external payable override returns (uint256 amountOut) {
-        if (testingNegativeScenarioOne) {
+        if (negativeTest == NegativeTest.SwapRouterNotSupported) {
             revert("Negative scenario");
+        }
+
+        if (negativeTest == NegativeTest.Reentrant) {
+            _reentrant();
         }
         // Decode the path to get the input and output tokens
         (address tokenIn, address tokenOut) = _decodePath(params.path);
@@ -87,8 +103,12 @@ contract MockSwapRouter is ISwapRouter {
     function exactOutputSingle(
         ExactOutputSingleParams calldata params
     ) external payable override returns (uint256 amountIn) {
-        if (testingNegativeScenarioTwo) {
+        if (negativeTest == NegativeTest.SwapRouterNotSupported) {
             revert("Negative scenario");
+        }
+
+        if (negativeTest == NegativeTest.Reentrant) {
+            _reentrant();
         }
         // amountIn = amountOut in our mock scenario
         amountIn = params.amountOut;
@@ -107,20 +127,20 @@ contract MockSwapRouter is ISwapRouter {
      * @return amountIn The amount of input tokens spent.
      */
     function exactOutput(ExactOutputParams calldata params) external payable override returns (uint256 amountIn) {
-        if (testingNegativeScenarioTwo) {
+        if (negativeTest == NegativeTest.SwapRouterNotSupported) {
             revert("Negative scenario");
         }
 
-        (, address tokenOut) = _decodePath(params.path);
+        if (negativeTest == NegativeTest.Reentrant) {
+            _reentrant();
+        }
+
+        (address tokenOut, address tokenIn) = _decodePath(params.path);
 
         // amountIn = amountOut (1:1)
         amountIn = params.amountOut;
-
-        // console.log("tokenIn: %s", tokenIn);
-        // console.log("tokenOut: %s", tokenOut);
-
-        // // Transfer tokenIn from caller
-        // IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
+        // Transfer tokenIn from caller
+        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
         // Transfer tokenOut to recipient
         IERC20(tokenOut).transfer(params.recipient, params.amountOut);
     }
