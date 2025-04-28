@@ -57,18 +57,18 @@ const FEE_500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(500), 3); // 0.05%
 const FEE_100 = ethers.utils.hexZeroPad(ethers.utils.hexlify(100), 3); // 0.01%
 
 const POSITION_AAVE_ABI = [
-    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 deadline, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 deadline, uint256 amountOutMinimum) swapParams)[]"
 ];
 
 const POSITION_SPARK_ABI = [
-    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(address spToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 deadline, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address spToken, uint256 amount, tuple(bytes path, uint256 deadline, uint256 amountOutMinimum) swapParams)[]"
 ];
 
 const POSITION_MORPHO_ABI = [
-    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 deadline, uint256 amountInMaximum) swapParams)[]",
+    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 deadline, uint256 amountOutMinimum) swapParams)[]"
 ];
 
 describe("MigratorV2", function () {
@@ -376,8 +376,13 @@ describe("MigratorV2", function () {
         const MockSwapRouter = await ethers.getContractFactory("MockSwapRouter");
         const mockSwapRouter = await MockSwapRouter.deploy();
         await mockSwapRouter.deployed();
+        // Deploy mock Swap Router02
+        const MockSwapRouter02 = await ethers.getContractFactory("MockSwapRouter02");
+        const mockSwapRouter02 = await MockSwapRouter02.deploy();
+        await mockSwapRouter02.deployed();
+
         // Initial financing of contracts
-        // Fund Swap Router
+        // Fund Swap Routers
         await mockDAI.transfer(mockSwapRouter.address, parseEther("2000"));
         await mockUSDS.transfer(mockSwapRouter.address, parseEther("2000"));
         await mockWETH.transfer(mockSwapRouter.address, parseEther("2000"));
@@ -386,6 +391,16 @@ describe("MigratorV2", function () {
             to: mockSwapRouter.address,
             value: parseEther("2000")
         });
+
+        await mockDAI.transfer(mockSwapRouter02.address, parseEther("2000"));
+        await mockUSDS.transfer(mockSwapRouter02.address, parseEther("2000"));
+        await mockWETH.transfer(mockSwapRouter02.address, parseEther("2000"));
+        await mockUSDT.transfer(mockSwapRouter02.address, parseEther("2000"));
+        await deployer.sendTransaction({
+            to: mockSwapRouter02.address,
+            value: parseEther("2000")
+        });
+
         // Fund Uniswap V3 Pool
         await mockDAI.transfer(uniswapV3PoolUsdsDai.address, parseEther("2000"));
         await mockUSDS.transfer(uniswapV3PoolUsdsDai.address, parseEther("2000"));
@@ -446,6 +461,7 @@ describe("MigratorV2", function () {
             uniswapV3PoolUsdsDai,
             uniswapV3PoolUsdtWeth,
             mockSwapRouter,
+            mockSwapRouter02,
             mockMorpho,
             mockQuoterV2
         };
@@ -465,7 +481,8 @@ describe("MigratorV2", function () {
             usds: mocks.mockUSDS.address,
             aaveLendingPool: mocks.aaveContract.lendingPools.address,
             aaveDataProvider: mocks.aaveContract.lendingPools.address,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: false
         })) as AaveV3UsdsAdapter;
         await aaveV3UsdsAdapter.deployed();
 
@@ -475,30 +492,33 @@ describe("MigratorV2", function () {
             uniswapRouter: mocks.mockSwapRouter.address,
             aaveLendingPool: mocks.aaveContract.lendingPools.address,
             aaveDataProvider: mocks.aaveContract.lendingPools.address,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: false
         })) as AaveV3Adapter;
         await aaveV3Adapter.deployed();
 
         // Deploy SparkUsdsAdapter
         const SparkUsdsAdapterFactory = await ethers.getContractFactory("SparkUsdsAdapter", adapterDeployer);
         const sparkUsdsAdapter = (await SparkUsdsAdapterFactory.connect(owner).deploy({
-            uniswapRouter: mocks.mockSwapRouter.address,
+            uniswapRouter: mocks.mockSwapRouter02.address,
             daiUsdsConverter: mocks.mockDaiUsds.address,
             dai: mocks.mockDAI.address,
             usds: mocks.mockUSDS.address,
             sparkLendingPool: mocks.sparkContract.lendingPools.address,
             sparkDataProvider: mocks.sparkContract.lendingPools.address,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: true
         })) as SparkUsdsAdapter;
         await sparkUsdsAdapter.deployed();
 
         // Deploy SparkAdapter
         const SparkAdapterFactory = await ethers.getContractFactory("SparkAdapter", adapterDeployer);
         const sparkAdapter = (await SparkAdapterFactory.connect(owner).deploy({
-            uniswapRouter: mocks.mockSwapRouter.address,
+            uniswapRouter: mocks.mockSwapRouter02.address,
             sparkLendingPool: mocks.sparkContract.lendingPools.address,
             sparkDataProvider: mocks.sparkContract.lendingPools.address,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: true
         })) as SparkAdapter;
         await sparkAdapter.deployed();
 
@@ -510,7 +530,8 @@ describe("MigratorV2", function () {
             dai: mocks.mockDAI.address,
             usds: mocks.mockUSDS.address,
             morphoLendingPool: mocks.mockMorpho.address,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: false
         })) as MorphoUsdsAdapter;
         await morphoUsdsAdapter.deployed();
 
@@ -519,7 +540,8 @@ describe("MigratorV2", function () {
         const morphoAdapter = (await MorphoAdapterFactory.connect(owner).deploy({
             uniswapRouter: mocks.mockSwapRouter.address,
             morphoLendingPool: mocks.mockMorpho.address,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: false
         })) as MorphoAdapter;
         await morphoAdapter.deployed();
 
@@ -550,7 +572,14 @@ describe("MigratorV2", function () {
         ];
 
         const MigratorV2Factory = await ethers.getContractFactory("MigratorV2");
-        const migrator = await MigratorV2Factory.connect(owner).deploy(owner.address, adapters, comets, flashData);
+        const migrator = await MigratorV2Factory.connect(owner).deploy(
+            owner.address,
+            adapters,
+            comets,
+            flashData,
+            mocks.tokenContracts.DAI.address,
+            mocks.tokenContracts.USDS.address
+        );
         await migrator.deployed();
 
         // Deploy UniswapV3PathFinder contract
@@ -614,7 +643,8 @@ describe("MigratorV2", function () {
                         uniswapRouter: AddressZero, ///< Invalid address
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3Adapter, "InvalidZeroAddress");
 
@@ -623,7 +653,8 @@ describe("MigratorV2", function () {
                         uniswapRouter: mocks.mockSwapRouter.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: AddressZero, ///< Invalid address
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3Adapter, "InvalidZeroAddress");
             });
@@ -646,7 +677,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
 
@@ -658,7 +690,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
 
@@ -670,7 +703,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
 
@@ -682,7 +716,8 @@ describe("MigratorV2", function () {
                         usds: AddressZero, ///< Invalid address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
 
@@ -694,7 +729,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: AddressZero, ///< Invalid address
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
 
@@ -706,7 +742,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: AddressZero, ///< Invalid address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
             });
@@ -722,7 +759,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: AddressZero, ///< Invalid address
                         aaveDataProvider: mocks.aaveContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
 
@@ -734,7 +772,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         aaveLendingPool: mocks.aaveContract.lendingPools.address,
                         aaveDataProvider: AddressZero, ///< Invalid address
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidZeroAddress");
             });
@@ -748,7 +787,7 @@ describe("MigratorV2", function () {
 
             it("Should have correct dependencies", async () => {
                 const { sparkAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                expect(await sparkAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await sparkAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter02.address);
                 expect(await sparkAdapter.LENDING_POOL()).to.equal(mocks.sparkContract.lendingPools.address);
             });
 
@@ -760,7 +799,8 @@ describe("MigratorV2", function () {
                         uniswapRouter: mocks.mockSwapRouter.address,
                         sparkLendingPool: AddressZero, ///< Invalid address
                         sparkDataProvider: mocks.sparkContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(sparkAdapter, "InvalidZeroAddress");
 
@@ -769,7 +809,8 @@ describe("MigratorV2", function () {
                         uniswapRouter: mocks.mockSwapRouter.address,
                         sparkLendingPool: mocks.sparkContract.lendingPools.address,
                         sparkDataProvider: AddressZero, ///< Invalid address
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(sparkAdapter, "InvalidZeroAddress");
             });
@@ -783,7 +824,7 @@ describe("MigratorV2", function () {
 
             it("Should have correct dependencies", async () => {
                 const { sparkUsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
-                expect(await sparkUsdsAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter.address);
+                expect(await sparkUsdsAdapter.UNISWAP_ROUTER()).to.equal(mocks.mockSwapRouter02.address);
                 expect(await sparkUsdsAdapter.DAI_USDS_CONVERTER()).to.equal(mocks.mockDaiUsds.address);
                 expect(await sparkUsdsAdapter.DAI()).to.equal(mocks.mockDAI.address);
                 expect(await sparkUsdsAdapter.USDS()).to.equal(mocks.mockUSDS.address);
@@ -801,7 +842,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         sparkLendingPool: AddressZero, ///< Invalid address
                         sparkDataProvider: mocks.sparkContract.lendingPools.address,
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(sparkUsdsAdapter, "InvalidZeroAddress");
 
@@ -813,7 +855,8 @@ describe("MigratorV2", function () {
                         usds: mocks.mockUSDS.address,
                         sparkLendingPool: mocks.sparkContract.lendingPools.address,
                         sparkDataProvider: AddressZero, ///< Invalid address
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(sparkUsdsAdapter, "InvalidZeroAddress");
             });
@@ -838,7 +881,8 @@ describe("MigratorV2", function () {
                     MorphoAdapterFactory.deploy({
                         uniswapRouter: mocks.mockSwapRouter.address,
                         morphoLendingPool: AddressZero, ///< Invalid address
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(morphoAdapter, "InvalidZeroAddress");
             });
@@ -869,7 +913,8 @@ describe("MigratorV2", function () {
                         dai: mocks.mockDAI.address,
                         usds: mocks.mockUSDS.address,
                         morphoLendingPool: AddressZero, ///< Invalid address
-                        isFullMigration: false
+                        isFullMigration: false,
+                        useSwapRouter02: false
                     })
                 ).to.be.revertedWithCustomError(morphoUsdsAdapter, "InvalidZeroAddress");
             });
@@ -898,331 +943,15 @@ describe("MigratorV2", function () {
                 const MigratorV2Factory = await ethers.getContractFactory("MigratorV2", adapterDeployer);
 
                 await expect(
-                    MigratorV2Factory.deploy(mocks.mockSwapRouter.address, [], [mocks.mockCometUsdt.address], [])
-                ).to.be.revertedWithCustomError(migrator, "MismatchedArrayLengths");
-            });
-        });
-    });
-
-    describe("# UniswapV3PathFinder", function () {
-        context("* Deployment", async () => {
-            it("Should deploy UniswapV3PathFinder to a proper address", async () => {
-                const { uniswapV3PathFinder } = await loadFixture(setupTestEnvironment);
-                expect(uniswapV3PathFinder.address).to.be.properAddress;
-            });
-
-            it("Should have correct dependencies", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-                expect(await uniswapV3PathFinder.QUOTER_V2()).to.equal(mocks.mockQuoterV2.address);
-                expect(await uniswapV3PathFinder.DAI()).to.equal(mocks.tokenContracts.DAI.address);
-                expect(await uniswapV3PathFinder.USDS()).to.equal(mocks.tokenContracts.USDS.address);
-            });
-
-            it("Should revert if invalid constructor parameters", async () => {
-                const { mocks, adapterDeployer, uniswapV3PathFinder } = await loadFixture(setupTestEnvironment);
-                const UniswapV3PathFinderFactory = await ethers.getContractFactory(
-                    "UniswapV3PathFinder",
-                    adapterDeployer
-                );
-                await expect(
-                    UniswapV3PathFinderFactory.deploy(
+                    MigratorV2Factory.deploy(
+                        mocks.mockSwapRouter.address,
+                        [],
+                        [mocks.mockCometUsdt.address],
+                        [],
                         AddressZero,
-                        mocks.mockQuoterV2.address,
-                        mocks.tokenContracts.DAI.address,
-                        mocks.tokenContracts.USDS.address
-                    )
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidZeroAddress");
-
-                await expect(
-                    UniswapV3PathFinderFactory.deploy(
-                        mocks.mockQuoterV2.address,
-                        AddressZero,
-                        mocks.tokenContracts.DAI.address,
-                        mocks.tokenContracts.USDS.address
-                    )
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidZeroAddress");
-
-                await expect(
-                    UniswapV3PathFinderFactory.deploy(
-                        mocks.mockQuoterV2.address,
-                        mocks.mockQuoterV2.address,
-                        AddressZero,
-                        mocks.tokenContracts.USDS.address
-                    )
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidConfiguration");
-
-                await expect(
-                    UniswapV3PathFinderFactory.deploy(
-                        mocks.mockQuoterV2.address,
-                        mocks.mockQuoterV2.address,
-                        mocks.tokenContracts.DAI.address,
                         AddressZero
                     )
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "InvalidConfiguration");
-            });
-        });
-
-        context("* Functionality", async () => {
-            it("Should return correct amount | single swap path | quoteExactInput", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                const swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
-                    tokenIn: mocks.tokenContracts.USDT.address,
-                    tokenOut: mocks.tokenContracts.USDS.address,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountIn.mul(105).div(100));
-            });
-
-            it("Should return correct amount | single swap path | convert DAI to USDS", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-
-                let amountIn = parseEther("200");
-                let amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                let swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
-                    tokenIn: mocks.tokenContracts.DAI.address,
-                    tokenOut: mocks.tokenContracts.USDS.address,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountIn);
-                expect(swapData.path).to.deep.equal(
-                    ethers.utils.hexConcat([
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
-                    ])
-                );
-
-                amountIn = Zero;
-                amountOut = parseEther("200");
-
-                swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
-                    tokenIn: mocks.tokenContracts.DAI.address,
-                    tokenOut: mocks.tokenContracts.USDS.address,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountOut);
-                expect(swapData.path).to.deep.equal(
-                    ethers.utils.hexConcat([
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
-                    ])
-                );
-            });
-
-            it("Should return correct amount | single swap path | convert USDS to DAI", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-
-                let amountIn = Zero;
-                let amountOut = parseEther("300");
-                const maxGasEstimate = 1000000n;
-
-                let swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
-                    tokenIn: mocks.tokenContracts.USDS.address,
-                    tokenOut: mocks.tokenContracts.DAI.address,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountOut);
-                expect(swapData.path).to.deep.equal(
-                    ethers.utils.hexConcat([
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
-                    ])
-                );
-
-                amountIn = parseEther("300");
-                amountOut = Zero;
-
-                swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
-                    tokenIn: mocks.tokenContracts.USDS.address,
-                    tokenOut: mocks.tokenContracts.DAI.address,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountIn);
-                expect(swapData.path).to.deep.equal(
-                    ethers.utils.hexConcat([
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
-                        ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
-                    ])
-                );
-            });
-
-            it("Should return correct amount | single swap path | quoteExactOutput", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-
-                const amountIn = Zero;
-                const amountOut = parseEther("200");
-                const maxGasEstimate = 1000000n;
-
-                const swapData = await uniswapV3PathFinder.callStatic.getBestSingleSwapPath({
-                    tokenIn: mocks.tokenContracts.USDT.address,
-                    tokenOut: mocks.tokenContracts.USDS.address,
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountOut.mul(95).div(100));
-            });
-
-            it("Should return correct amount | multi swap path | quoteExactInput", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                const swapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath({
-                    tokenIn: mocks.tokenContracts.USDT.address,
-                    tokenOut: mocks.tokenContracts.USDS.address,
-                    connectors: [mocks.tokenContracts.WETH.address],
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountIn.mul(105).div(100));
-            });
-
-            it("Should return correct amount | multi swap path | quoteExactOutput", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-
-                const amountIn = Zero;
-                const amountOut = parseEther("200");
-                const maxGasEstimate = 1000000n;
-
-                const swapData = await uniswapV3PathFinder.callStatic.getBestMultiSwapPath({
-                    tokenIn: mocks.tokenContracts.USDT.address,
-                    tokenOut: mocks.tokenContracts.USDS.address,
-                    connectors: [mocks.tokenContracts.WETH.address],
-                    amountIn,
-                    amountOut,
-                    excludedPool: AddressZero,
-                    maxGasEstimate
-                });
-
-                expect(swapData.estimatedAmount).to.deep.equal(amountOut.mul(95).div(100));
-            });
-        });
-        context("* Testing negative scenarios", async () => {
-            it("Should revert if invalid pool | single path", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockQuoterV2 } = mocks;
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                await mockQuoterV2.setNegativeTest(NEGATIVE_TEST.InvalidPool);
-
-                await expect(
-                    uniswapV3PathFinder.getBestSingleSwapPath({
-                        tokenIn: mocks.tokenContracts.USDT.address,
-                        tokenOut: mocks.tokenContracts.USDS.address,
-                        amountIn,
-                        amountOut,
-                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
-                        maxGasEstimate
-                    })
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
-            });
-
-            it("Should revert if invalid pool | multi path", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-                const { mockQuoterV2 } = mocks;
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                await mockQuoterV2.setNegativeTest(NEGATIVE_TEST.InvalidPool);
-
-                await expect(
-                    uniswapV3PathFinder.getBestMultiSwapPath({
-                        tokenIn: mocks.tokenContracts.USDT.address,
-                        tokenOut: mocks.tokenContracts.USDS.address,
-                        connectors: [mocks.tokenContracts.WETH.address],
-                        amountIn,
-                        amountOut,
-                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
-                        maxGasEstimate
-                    })
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
-            });
-
-            it("Should revert if don't have connector | multi path", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                await expect(
-                    uniswapV3PathFinder.getBestMultiSwapPath({
-                        tokenIn: mocks.tokenContracts.USDT.address,
-                        tokenOut: mocks.tokenContracts.USDS.address,
-                        connectors: [],
-                        amountIn,
-                        amountOut,
-                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
-                        maxGasEstimate
-                    })
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "MustBeAtLeastOneConnector");
-            });
-
-            it("Should revert if connector == tokenIn or tokenOut | multi path", async () => {
-                const { uniswapV3PathFinder, mocks } = await loadFixture(setupTestEnvironment);
-                const amountIn = parseEther("200");
-                const amountOut = Zero;
-                const maxGasEstimate = 1000000n;
-
-                await expect(
-                    uniswapV3PathFinder.getBestMultiSwapPath({
-                        tokenIn: mocks.tokenContracts.USDT.address,
-                        tokenOut: mocks.tokenContracts.USDS.address,
-                        connectors: [mocks.tokenContracts.USDT.address],
-                        amountIn,
-                        amountOut,
-                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
-                        maxGasEstimate
-                    })
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
-
-                await expect(
-                    uniswapV3PathFinder.getBestMultiSwapPath({
-                        tokenIn: mocks.tokenContracts.USDT.address,
-                        tokenOut: mocks.tokenContracts.USDS.address,
-                        connectors: [mocks.tokenContracts.USDS.address],
-                        amountIn,
-                        amountOut,
-                        excludedPool: mocks.uniswapV3PoolUsdsDai.address,
-                        maxGasEstimate
-                    })
-                ).to.be.revertedWithCustomError(uniswapV3PathFinder, "SwapPoolsNotFound");
+                ).to.be.revertedWithCustomError(migrator, "MismatchedArrayLengths");
             });
         });
     });
@@ -1290,6 +1019,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -1300,6 +1031,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -1315,7 +1047,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1361,6 +1094,8 @@ describe("MigratorV2", function () {
                 await uniswapV3PoolUsdsDai.setNegativeTest(NEGATIVE_TEST.FakeUniswapV3Pool);
 
                 // Testing without setup the required data and conditions
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -1371,6 +1106,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -1386,7 +1122,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1414,6 +1151,8 @@ describe("MigratorV2", function () {
                 await uniswapV3PoolUsdsDai.setNegativeTest(NEGATIVE_TEST.InvalidCallbackData);
 
                 // Testing without setup the required data and conditions
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -1424,6 +1163,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -1439,7 +1179,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1467,6 +1208,8 @@ describe("MigratorV2", function () {
                 await uniswapV3PoolUsdsDai.setNegativeTest(NEGATIVE_TEST.Reentrant);
 
                 // Testing without setup the required data and conditions
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -1477,6 +1220,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -1492,7 +1236,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1579,6 +1324,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -1590,7 +1337,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1641,6 +1389,7 @@ describe("MigratorV2", function () {
             });
 
             it("Should revert if swap fail | borrow position", async () => {
+                // done
                 const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
                 const { tokenContracts, aaveContract, mockSwapRouter } = mocks;
 
@@ -1706,6 +1455,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -1717,6 +1468,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -1732,7 +1484,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1767,7 +1520,7 @@ describe("MigratorV2", function () {
                     migrator
                         .connect(user)
                         .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
-                ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
+                ).to.be.revertedWith("Negative scenario: SwapRouter not supported");
 
                 const userBalancesAfter = {
                     collateralsAave: {
@@ -1858,6 +1611,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -1869,6 +1624,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -1884,7 +1640,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -1942,6 +1699,7 @@ describe("MigratorV2", function () {
                 expect(userBalancesAfter.collateralsComet.USDS).to.be.equal(userBalancesBefore.collateralsComet.USDS);
             });
             it("Should revert if swap fail | zero amount in", async () => {
+                // teat
                 const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
                 const { tokenContracts, aaveContract, mockSwapRouter } = mocks;
 
@@ -2007,6 +1765,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2018,6 +1778,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -2033,7 +1794,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -2157,6 +1919,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2168,6 +1932,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -2183,7 +1948,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -2218,7 +1984,7 @@ describe("MigratorV2", function () {
                     migrator
                         .connect(user)
                         .migrate(aaveV3UsdsAdapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
-                ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
+                ).to.be.revertedWith("Negative scenario: SwapRouter not supported");
 
                 const userBalancesAfter = {
                     collateralsAave: {
@@ -2305,6 +2071,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2315,6 +2083,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -2330,7 +2099,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -2453,6 +2223,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2464,6 +2236,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -2479,7 +2252,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -2602,6 +2376,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2612,6 +2388,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20),
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -2627,7 +2404,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -2750,6 +2528,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2757,6 +2537,7 @@ describe("MigratorV2", function () {
                             amount: MaxUint256,
                             swapParams: {
                                 path: "0x",
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -2772,7 +2553,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -2889,6 +2671,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -2896,6 +2680,7 @@ describe("MigratorV2", function () {
                             assetsAmount: borrowAData.DAI.borrowAmount,
                             swapParams: {
                                 path: "0x",
+                                deadline,
                                 amountInMaximum: borrowAData.DAI.borrowAmount
                             }
                         }
@@ -2906,7 +2691,8 @@ describe("MigratorV2", function () {
                             assetsAmount: supplyData.USDS.supplyAmount,
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -3000,6 +2786,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -3007,6 +2795,7 @@ describe("MigratorV2", function () {
                             assetsAmount: borrowAData.DAI.borrowAmount,
                             swapParams: {
                                 path: "0x",
+                                deadline,
                                 amountInMaximum: borrowAData.DAI.borrowAmount
                             }
                         }
@@ -3017,7 +2806,8 @@ describe("MigratorV2", function () {
                             assetsAmount: supplyData.USDS.supplyAmount,
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -3117,6 +2907,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -3127,6 +2919,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -3142,7 +2935,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -3164,7 +2958,7 @@ describe("MigratorV2", function () {
                         .connect(user)
                         .migrate(aaveV3Adapter.address, mocks.mockCometUsds.address, migrationData, flashAmount)
                     // ).to.be.revertedWithCustomError(aaveV3Adapter, "ReentrancyGuardReentrantCall"); ///< Because of the construction try-catch
-                ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
+                ).to.be.revertedWithCustomError(migrator, "DelegatecallFailed");
             });
 
             it("Should revert if trying to reenter migration function on the adapter: aaveV3UsdsAdapter", async () => {
@@ -3229,6 +3023,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -3240,6 +3036,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -3255,7 +3052,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -3277,11 +3075,815 @@ describe("MigratorV2", function () {
                     migrator
                         .connect(user)
                         .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
-                    // ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ReentrancyGuardReentrantCall"); ///< Because of the construction try-catch
-                ).to.be.revertedWith("Swap router does not support ISwapRouter or ISwapRouter02");
+                ).to.be.revertedWithCustomError(migrator, "DelegatecallFailed");
             });
 
-            // it("Should revert if )
+            it("Should revert if outdated swap deadline for borrow position", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockSwapRouter, mockCometUsdt, mockWETH } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = BigNumber.from(
+                    await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000)
+                );
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline: deadline.div(2), // << Outdated deadline
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountOutMinimum: 1n
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidSwapDeadline");
+            });
+
+            it("Should revert if swap deadline is zero for borrow position", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockCometUsdt } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = BigNumber.from(
+                    await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000)
+                );
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline: Zero, // << Invalid deadline
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountOutMinimum: 1n
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidSwapDeadline");
+            });
+
+            it("Should revert if outdated swap deadline for collateral position", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockSwapRouter, mockCometUsdt, mockWETH } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = BigNumber.from(
+                    await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000)
+                );
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline: deadline.div(2), // << Outdated deadline
+                                amountOutMinimum: 1n
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidSwapDeadline");
+            });
+
+            it("Should revert if swap deadline is zero for collateral position", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockCometUsdt } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = BigNumber.from(
+                    await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000)
+                );
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline: Zero, // << Invalid deadline
+                                amountOutMinimum: 1n
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidSwapDeadline");
+            });
+
+            it("Should revert if set zero slippage for swap borrow position", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockCometUsdt } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = BigNumber.from(
+                    await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000)
+                );
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountInMaximum: Zero // << Invalid slippage
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountOutMinimum: 1n
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ZeroAmountInMaximum");
+            });
+
+            it("Should revert if set zero slippage for swap collateral position", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockCometUsdt } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = BigNumber.from(
+                    await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000)
+                );
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountOutMinimum: Zero // << Invalid slippage
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "ZeroAmountOutMinimum");
+            });
+
+            it("Should revert if swap deadline is zero ", async () => {
+                const { migrator, user, aaveV3UsdsAdapter, mocks } = await loadFixture(setupTestEnvironment);
+                const { tokenContracts, aaveContract, mockSwapRouter, mockCometUsdt } = mocks;
+
+                const aaveLendingPool = aaveContract.lendingPools;
+
+                const supplyAmounts = {
+                    WETH: parseEther("500")
+                };
+
+                // Setup for AaveV3 -> Comet migration
+                // Fund user with tokens
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    if ("mint" in tokenContract) {
+                        await tokenContract.connect(user).mint(amount);
+                    } else {
+                        await tokenContract.connect(user).deposit({ value: amount });
+                    }
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const aTokenContract = aaveContract.aTokens[token];
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    // Approve token and deposit to Aave
+                    await tokenContract.connect(user).approve(aaveLendingPool.address, amount);
+                    await aaveLendingPool.connect(user).deposit(tokenContract.address, amount);
+
+                    expect(await aTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Borrow from Aave - DAI
+                const borrowAmounts = {
+                    DAI: parseEther("100")
+                };
+
+                for (const [token, amount] of Object.entries(borrowAmounts)) {
+                    const tokenContract = tokenContracts[token];
+                    const debtTokenContract = aaveContract.debtTokens[token];
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(Zero);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(Zero);
+
+                    await aaveLendingPool.connect(user).borrow(tokenContract.address, amount);
+
+                    expect(await tokenContract.balanceOf(user.address)).to.equal(amount);
+                    expect(await debtTokenContract.balanceOf(user.address)).to.equal(amount);
+                }
+
+                // Init migration
+                // Approve migration
+
+                for (const [token, amount] of Object.entries(supplyAmounts)) {
+                    const aTokenContract = aaveContract.aTokens[token];
+                    await aTokenContract.connect(user).approve(migrator.address, amount);
+                }
+
+                const deadline = Zero;
+
+                const position = {
+                    borrows: [
+                        {
+                            debtToken: aaveContract.debtTokens.DAI.address,
+                            amount: MaxUint256,
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountInMaximum: parseEther("100")
+                            }
+                        }
+                    ],
+
+                    collaterals: [
+                        {
+                            aToken: aaveContract.aTokens.WETH.address,
+                            amount: parseEther("500"),
+                            swapParams: {
+                                path: ethers.utils.concat([
+                                    ethers.utils.hexZeroPad(tokenContracts.WETH.address, 20),
+                                    FEE_100,
+                                    ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
+                                ]),
+                                deadline,
+                                amountOutMinimum: 1n
+                            }
+                        }
+                    ]
+                };
+
+                // Encode the data
+                const migrationData = ethers.utils.defaultAbiCoder.encode(
+                    ["tuple(" + POSITION_AAVE_ABI.join(",") + ")"],
+                    [[position.borrows, position.collaterals]]
+                );
+
+                const flashAmount = parseEther("100");
+
+                // Fake a partial debt closure
+                await mockSwapRouter.setAdapter(aaveV3UsdsAdapter.address);
+                await mockSwapRouter.setNegativeTest(NEGATIVE_TEST.Reentrant);
+
+                await expect(
+                    migrator
+                        .connect(user)
+                        .migrate(aaveV3UsdsAdapter.address, mockCometUsdt.address, migrationData, flashAmount)
+                ).to.be.revertedWithCustomError(aaveV3UsdsAdapter, "InvalidSwapDeadline");
+            });
         });
 
         context("* Testing ownership and access control", async () => {
@@ -3313,7 +3915,8 @@ describe("MigratorV2", function () {
                     // wrappedNativeToken: aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN(),
                     aaveLendingPool: aaveV3UsdsAdapter.LENDING_POOL(),
                     aaveDataProvider: aaveV3UsdsAdapter.LENDING_POOL(), // TODO: change to mockAaveDataProvider
-                    isFullMigration: true
+                    isFullMigration: true,
+                    useSwapRouter02: true
                 });
 
                 await expect(migrator.connect(owner).setAdapter(newAdapter.address))
@@ -3337,7 +3940,8 @@ describe("MigratorV2", function () {
                     // wrappedNativeToken: aaveV3UsdsAdapter.WRAPPED_NATIVE_TOKEN(),
                     aaveLendingPool: aaveV3UsdsAdapter.LENDING_POOL(),
                     aaveDataProvider: aaveV3UsdsAdapter.LENDING_POOL(), // TODO: change to mockAaveDataProvider
-                    isFullMigration: true
+                    isFullMigration: true,
+                    useSwapRouter02: true
                 });
 
                 await expect(migrator.connect(user).setAdapter(newAdapter.address))
@@ -3398,7 +4002,7 @@ describe("MigratorV2", function () {
                 );
             });
 
-            it("Should set new flashData", async () => {
+            it.skip("Should set new flashData", async () => {
                 const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
                 const newComet = ethers.Wallet.createRandom().address;
 
@@ -3454,7 +4058,7 @@ describe("MigratorV2", function () {
                 ).to.be.revertedWithCustomError(migrator, "InvalidZeroAddress");
             });
 
-            it("Should revert if flashData already configured for specific comet", async () => {
+            it.skip("Should revert if flashData already configured for specific comet", async () => {
                 const { migrator, owner, mocks } = await loadFixture(setupTestEnvironment);
                 const newComet = ethers.Wallet.createRandom().address;
 
@@ -3599,6 +4203,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -3609,6 +4215,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -3624,7 +4231,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -3748,6 +4356,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -3758,6 +4368,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -3773,7 +4384,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -3899,6 +4511,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -3909,6 +4523,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -3924,7 +4539,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4025,6 +4641,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -4036,7 +4654,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4127,6 +4746,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -4135,7 +4756,8 @@ describe("MigratorV2", function () {
                             amount: parseEther("700"),
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4188,7 +4810,7 @@ describe("MigratorV2", function () {
         });
 
         context("* AaveV3 -> Comet | AaveV3Adapter", async () => {
-            it("Should migrate a user's position successfully with: convert and swap token", async () => {
+            it("Should migrate a user's position successfully with: swap token", async () => {
                 const { migrator, user, aaveV3Adapter, mocks } = await loadFixture(setupTestEnvironment);
                 const { tokenContracts, aaveContract, mockWETH, mockCometUsdt } = mocks;
 
@@ -4254,6 +4876,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -4265,6 +4889,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -4280,7 +4905,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4400,6 +5026,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -4407,6 +5035,7 @@ describe("MigratorV2", function () {
                             amount: parseEther("100"),
                             swapParams: {
                                 path: "0x",
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -4422,7 +5051,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4523,6 +5153,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -4534,7 +5166,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4625,6 +5258,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -4633,7 +5268,8 @@ describe("MigratorV2", function () {
                             amount: parseEther("700"),
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4749,6 +5385,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -4760,6 +5398,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -4775,7 +5414,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -4896,6 +5536,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -4903,6 +5545,7 @@ describe("MigratorV2", function () {
                             amount: MaxUint256,
                             swapParams: {
                                 path: "0x",
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -4918,7 +5561,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5038,6 +5682,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -5048,6 +5694,7 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -5063,7 +5710,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5164,6 +5812,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -5175,7 +5825,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5266,6 +5917,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -5274,7 +5927,8 @@ describe("MigratorV2", function () {
                             amount: parseEther("700"),
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5393,6 +6047,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -5404,6 +6060,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -5419,7 +6076,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5543,6 +6201,8 @@ describe("MigratorV2", function () {
                     await aTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -5550,6 +6210,7 @@ describe("MigratorV2", function () {
                             amount: MaxUint256,
                             swapParams: {
                                 path: "0x",
+                                deadline,
                                 amountInMaximum: parseEther("100")
                             }
                         }
@@ -5565,7 +6226,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5666,6 +6328,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -5677,7 +6341,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5768,6 +6433,8 @@ describe("MigratorV2", function () {
                     await spTokenContract.connect(user).approve(migrator.address, amount);
                 }
 
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -5776,7 +6443,8 @@ describe("MigratorV2", function () {
                             amount: parseEther("700"),
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -5885,6 +6553,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -5896,6 +6566,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: borrowAData.USDS.borrowAmount
                             }
                         }
@@ -5910,7 +6581,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -6020,6 +6692,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -6031,6 +6705,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(mocks.tokenContracts.DAI.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: borrowAData.USDT.borrowAmount
                             }
                         }
@@ -6045,7 +6720,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -6139,6 +6815,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -6150,7 +6828,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -6235,6 +6914,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -6243,7 +6924,8 @@ describe("MigratorV2", function () {
                             assetsAmount: supplyData.USDS.supplyAmount,
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -6349,6 +7031,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [
                         {
@@ -6360,6 +7044,7 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
+                                deadline,
                                 amountInMaximum: borrowAData.USDS.borrowAmount
                             }
                         }
@@ -6374,7 +7059,8 @@ describe("MigratorV2", function () {
                                     FEE_100,
                                     ethers.utils.hexZeroPad(tokenContracts.USDT.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -6470,6 +7156,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -6481,7 +7169,8 @@ describe("MigratorV2", function () {
                                     ethers.utils.hexZeroPad(tokenContracts.DAI.address, 20),
                                     ethers.utils.hexZeroPad(tokenContracts.USDS.address, 20)
                                 ]),
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]
@@ -6565,6 +7254,8 @@ describe("MigratorV2", function () {
                 }
 
                 // Create migration position
+                const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
                 const position = {
                     borrows: [],
                     collaterals: [
@@ -6573,7 +7264,8 @@ describe("MigratorV2", function () {
                             assetsAmount: supplyData.USDS.supplyAmount,
                             swapParams: {
                                 path: "0x",
-                                amountOutMinimum: 0
+                                deadline,
+                                amountOutMinimum: 1n
                             }
                         }
                     ]

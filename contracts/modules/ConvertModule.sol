@@ -25,12 +25,12 @@ abstract contract ConvertModule is CommonErrors {
     /**
      * @notice Address of the DAI token.
      */
-    address public immutable DAI;
+    IERC20 public immutable DAI;
 
     /**
      * @notice Address of the USDS token.
      */
-    address public immutable USDS;
+    IERC20 public immutable USDS;
 
     /// --------Errors-------- ///
 
@@ -53,8 +53,8 @@ abstract contract ConvertModule is CommonErrors {
         }
 
         DAI_USDS_CONVERTER = IDaiUsds(_daiUsdsConverter);
-        DAI = _dai;
-        USDS = _usds;
+        DAI = IERC20(_dai);
+        USDS = IERC20(_usds);
     }
 
     /// --------Functions-------- ///
@@ -67,13 +67,13 @@ abstract contract ConvertModule is CommonErrors {
      */
     function _convertDaiToUsds(uint256 daiAmount) internal returns (uint256 usdsAmount) {
         // Approve the DaiUsds converter to spend DAI
-        IERC20(DAI).forceApprove(address(DAI_USDS_CONVERTER), daiAmount);
+        DAI.forceApprove(address(DAI_USDS_CONVERTER), daiAmount);
         // Get the USDS balance before conversion
-        uint256 usdsAmountBefore = IERC20(USDS).balanceOf(address(this));
+        uint256 usdsAmountBefore = USDS.balanceOf(address(this));
         // Convert DAI to USDS
         DAI_USDS_CONVERTER.daiToUsds(address(this), daiAmount);
         // Get the USDS balance after conversion
-        uint256 usdsAmountAfter = IERC20(USDS).balanceOf(address(this));
+        uint256 usdsAmountAfter = USDS.balanceOf(address(this));
         // Calculate the amount of USDS received
         usdsAmount = usdsAmountAfter - usdsAmountBefore;
         // Revert if the amount of USDS received is not equal to the expected amount
@@ -88,13 +88,13 @@ abstract contract ConvertModule is CommonErrors {
      */
     function _convertUsdsToDai(uint256 usdsAmount) internal returns (uint256 daiAmount) {
         // Approve the DaiUsds converter to spend USDS
-        IERC20(USDS).forceApprove(address(DAI_USDS_CONVERTER), usdsAmount);
+        USDS.forceApprove(address(DAI_USDS_CONVERTER), usdsAmount);
         // Get the DAI balance before conversion
-        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(address(this));
+        uint256 daiBalanceBefore = DAI.balanceOf(address(this));
         // Convert USDS to DAI
         DAI_USDS_CONVERTER.usdsToDai(address(this), usdsAmount);
         // Get the DAI balance after conversion
-        uint256 daiBalanceAfter = IERC20(DAI).balanceOf(address(this));
+        uint256 daiBalanceAfter = DAI.balanceOf(address(this));
         // Calculate the amount of DAI received
         daiAmount = daiBalanceAfter - daiBalanceBefore;
         // Revert if the amount of DAI received is not equal to the expected amount

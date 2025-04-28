@@ -26,14 +26,12 @@ import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
  * - Withdrawal of user collateral from Morpho using `withdrawCollateral` followed by:
  *    - Direct supply to Compound III,
  *    - Token conversion via Uniswap V3 if necessary, or
- *    - Native token wrapping (e.g. ETH → WETH) if required by the Comet market.
  * - Handling optional flash loan repayments from Uniswap V3 pools, optionally drawing funds from the user's Comet balance.
  * - Full or partial migrations, governed by the `IS_FULL_MIGRATION` flag. If set to `true`, the adapter enforces full debt repayment and reverts if residual borrow shares remain.
  *
  * Key features:
  * - Flexible repayment via Uniswap swaps with slippage control.
  * - Dynamic debt resolution using real-time share-to-asset conversions.
- * - Native token support (via WETH wrapping).
  * - Fully modular design via inheritance of common migration logic from `SwapModule`.
  *
  * Requirements:
@@ -57,6 +55,7 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
         address uniswapRouter;
         address morphoLendingPool;
         bool isFullMigration;
+        bool useSwapRouter02;
     }
 
     /**
@@ -122,8 +121,12 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * - isFullMigration Boolean indicating whether the migration is full or partial
      * @dev Reverts if any of the provided addresses are zero
      */
-    constructor(DeploymentParams memory deploymentParams) SwapModule(deploymentParams.uniswapRouter) {
+    constructor(
+        DeploymentParams memory deploymentParams
+    ) SwapModule(deploymentParams.uniswapRouter, deploymentParams.useSwapRouter02) {
         if (deploymentParams.morphoLendingPool == address(0)) revert InvalidZeroAddress();
+
+        // if (deploymentParams.morphoLendingPool == deploymentParams.uniswapRouter) revert IdenticalAddresses();
 
         LENDING_POOL = IMorpho(deploymentParams.morphoLendingPool);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
@@ -175,7 +178,8 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
         address user,
         address comet,
         bytes calldata migrationData,
-        bytes calldata flashloanData
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
     ) external {
         // Decode the migration data into an SparkPosition struct
         MorphoPosition memory position = abi.decode(migrationData, (MorphoPosition));
@@ -190,9 +194,9 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
             _migrateCollateral(user, comet, position.collateral[i]);
         }
 
-        // Repay flashloan
+        // Repay the flash loan if it has been used
         if (flashloanData.length > 0) {
-            _repayFlashloan(user, comet, flashloanData);
+            _repayFlashloan(user, comet, flashloanData, preBaseAssetBalance);
         }
     }
 
@@ -228,22 +232,64 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * Reverts:
      * - If the flash loan cannot be repaid in full due to insufficient funds or withdrawal failure.
      */
-    function _repayFlashloan(address user, address comet, bytes calldata flashloanData) internal {
-        (address flashLiquidityPool, address flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
+    function _repayFlashloan(
+        address user,
+        address comet,
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
+    ) internal {
+        (address flashLiquidityPool, IERC20 flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
             flashloanData,
-            (address, address, uint256)
+            (address, IERC20, uint256)
         );
 
         address executor = address(this);
-        uint256 balance = IERC20(flashBaseToken).balanceOf(executor);
+        uint256 ownBaseTokenBalance = flashBaseToken.balanceOf(executor);
 
-        if (balance < flashAmountWithFee) {
+        IERC20 cometBaseToken = IComet(comet).baseToken();
+
+        if (ownBaseTokenBalance < flashAmountWithFee) {
+            // Calculate the amount to withdraw from the user's Comet account
+            uint256 withdrawAmount = _calculateWithdrawAmount(comet, user, ownBaseTokenBalance, flashAmountWithFee);
+
             // Withdraw the required amount from the user's Comet account
-            IComet(comet).withdrawFrom(user, executor, flashBaseToken, (flashAmountWithFee - balance));
+            IComet(comet).withdrawFrom(user, executor, flashBaseToken, withdrawAmount);
         }
 
         // Repay the flash loan
-        IERC20(flashBaseToken).safeTransfer(flashLiquidityPool, flashAmountWithFee);
+        flashBaseToken.safeTransfer(flashLiquidityPool, flashAmountWithFee);
+
+        // Check residual base asset balance
+        uint256 residualBaseAsset = cometBaseToken.balanceOf(executor) - preBaseAssetBalance;
+
+        // If there is a residual base asset balance, supply it back to the user's Comet account
+        if (residualBaseAsset > 0) {
+            cometBaseToken.safeIncreaseAllowance(comet, residualBaseAsset);
+            IComet(comet).supplyTo(user, cometBaseToken, residualBaseAsset);
+        }
+    }
+
+    function _calculateWithdrawAmount(
+        address comet,
+        address user,
+        uint256 ownBaseTokenBalance,
+        uint256 repayFlashloanAmount
+    ) internal view returns (uint256 withdrawAmount) {
+        uint256 userBalanceBaseToken = IComet(comet).balanceOf(user);
+        uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
+        uint256 shortfallAmount = repayFlashloanAmount - ownBaseTokenBalance;
+
+        if (
+            (userBalanceBaseToken == 0 && baseBorrowMin <= shortfallAmount) ||
+            userBalanceBaseToken > shortfallAmount ||
+            ((shortfallAmount > userBalanceBaseToken ? (shortfallAmount - userBalanceBaseToken) : 0) > baseBorrowMin)
+        ) {
+            withdrawAmount = shortfallAmount;
+        } else if (shortfallAmount > userBalanceBaseToken && baseBorrowMin > userBalanceBaseToken) {
+            withdrawAmount = (baseBorrowMin - userBalanceBaseToken) + shortfallAmount;
+        } else {
+            withdrawAmount = baseBorrowMin;
+        }
     }
 
     /**
@@ -302,7 +348,7 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
                     recipient: address(this),
                     amountOut: borrow.assetsAmount,
                     amountInMaximum: borrow.swapParams.amountInMaximum,
-                    deadline: block.timestamp
+                    deadline: borrow.swapParams.deadline
                 })
             );
         }
@@ -331,8 +377,7 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      *  4. Depending on `swapParams`, it performs one of the following:
      *     - Executes a Uniswap V3 swap to convert the collateral to the desired token (`tokenOut`),
      *       then supplies the swapped token to the `comet` contract.
-     *     - If the collateral asset is a native token (e.g., ETH), wraps it into WETH and supplies it.
-     *     - Otherwise, supplies the original collateral token directly to the Comet market.
+     *     - If no swap is required, supplies the original collateral token directly to the Comet market.
      *
      * @param user The address of the user whose collateral is being migrated.
      * @param comet The address of the Compound III (Comet) market that will receive the collateral.
@@ -344,7 +389,6 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
      * Requirements:
      * - The user must have sufficient collateral in the specified market.
      * - If a swap is required, `swapParams.path` must be valid and executable.
-     * - If the asset is native (e.g., ETH), the contract must support wrapping into an ERC-20 (e.g., WETH).
      *
      * Effects:
      * - Withdraws collateral from Morpho.
@@ -361,30 +405,30 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
             : collateral.assetsAmount;
 
         // Get the underlying asset address of the collateral token
-        address collateralAsset = marketParams.collateralToken;
+        IERC20 collateralAsset = IERC20(marketParams.collateralToken);
 
         // Withdraw the collateral from Morpho
         LENDING_POOL.withdrawCollateral(marketParams, withdrawAmount, user, address(this));
 
         // If a swap is required to obtain the migration tokens
         if (collateral.swapParams.path.length > 0) {
-            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(collateral.swapParams.path);
             uint256 amountOut = _swapCollateralToCompoundToken(
                 ISwapRouter.ExactInputParams({
                     path: collateral.swapParams.path,
                     recipient: address(this),
                     amountIn: withdrawAmount,
                     amountOutMinimum: collateral.swapParams.amountOutMinimum,
-                    deadline: block.timestamp
+                    deadline: collateral.swapParams.deadline
                 })
             );
-            IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+            tokenOut.safeIncreaseAllowance(comet, amountOut);
             IComet(comet).supplyTo(user, tokenOut, amountOut);
             return;
 
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(collateralAsset).safeIncreaseAllowance(comet, withdrawAmount);
+            collateralAsset.safeIncreaseAllowance(comet, withdrawAmount);
             IComet(comet).supplyTo(user, collateralAsset, withdrawAmount);
         }
     }
@@ -405,7 +449,7 @@ contract MorphoAdapter is IProtocolAdapter, SwapModule {
     function _isDebtCleared(Id id, address user) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset
         Position memory position = LENDING_POOL.position(id, user);
-        // Debt is cleared if the total debt balance is zero
-        return position.borrowShares == 0;
+        // Debt is cleared if the debt balance is zero
+        isCleared = (position.borrowShares == 0);
     }
 }

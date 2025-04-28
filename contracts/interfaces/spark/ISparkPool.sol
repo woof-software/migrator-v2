@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 interface ISparkPool {
     /**
      * @notice Supplies an `amount` of underlying asset into the reserve, receiving in return overlying spTokens.
@@ -13,7 +15,7 @@ interface ISparkPool {
      * @param referralCode Code used to register the integrator originating the operation, for potential rewards.
      *   0 if the action is executed directly by the user, without any middle-man
      */
-    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
+    function supply(IERC20 asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
 
     /**
      * @notice Withdraws an `amount` of underlying asset from the reserve, burning the equivalent spTokens owned
@@ -26,7 +28,7 @@ interface ISparkPool {
      *   different wallet
      * @return The final amount withdrawn
      */
-    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
+    function withdraw(IERC20 asset, uint256 amount, address to) external returns (uint256);
 
     /**
      * @notice Repays a borrowed `amount` on a specific reserve, burning the equivalent debt tokens owned
@@ -41,7 +43,7 @@ interface ISparkPool {
      * @return The final amount repaid
      */
     function repay(
-        address asset,
+        IERC20 asset,
         uint256 amount,
         uint256 interestRateMode,
         address onBehalfOf
@@ -63,7 +65,7 @@ interface ISparkPool {
      * if he has been given credit delegation allowance
      */
     function borrow(
-        address asset,
+        IERC20 asset,
         uint256 amount,
         uint256 interestRateMode,
         uint16 referralCode,

@@ -11,7 +11,8 @@ import {
     parseUnits,
     loadFixture,
     logger,
-    BigNumber
+    BigNumber,
+    AddressZero
 } from "../../../helpers"; // Adjust the path as needed
 
 import { MigratorV2, MorphoAdapter, ERC20__factory, IComet__factory, ERC20 } from "../../../../typechain-types";
@@ -51,8 +52,8 @@ const FEE_500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(500), 3); // 0.05%
 const FEE_100 = ethers.utils.hexZeroPad(ethers.utils.hexlify(100), 3); // 0.01%
 
 const POSITION_ABI = [
-    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 deadline, uint256 amountInMaximum) swapParams)[]",
+    "tuple(bytes32 marketId, uint256 assetsAmount, tuple(bytes path, uint256 deadline, uint256 amountOutMinimum) swapParams)[]"
 ];
 
 const SLIPPAGE_BUFFER_PERCENT = 115; // 15% slippage buffer
@@ -137,7 +138,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             uniswapRouter: uniswapContractAddresses.router,
             // wrappedNativeToken: tokenAddresses.WETH,
             morphoLendingPool: morphoContractAddresses.pool,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: true
         })) as MorphoAdapter;
         await morphoAdapter.deployed();
 
@@ -158,7 +160,9 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             owner.address,
             adapters,
             comets,
-            flashData
+            flashData,
+            AddressZero,
+            AddressZero
         )) as MigratorV2;
         await migratorV2.deployed();
 
@@ -288,6 +292,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+
             const position = {
                 // Setup the borrows to be migrated
                 borrows: [
@@ -300,6 +306,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("130", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     },
@@ -308,7 +315,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     },
                     {
@@ -320,6 +328,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("100", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
@@ -335,7 +344,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -349,7 +359,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -363,7 +374,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -529,6 +541,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -540,6 +553,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("130", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
@@ -550,7 +564,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -709,6 +724,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 // Setup the borrows to be migrated
                 borrows: [
@@ -717,7 +733,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     },
                     {
@@ -729,6 +746,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("100", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
@@ -746,7 +764,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -760,7 +779,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -908,6 +928,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -915,7 +936,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -925,7 +947,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1065,6 +1088,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1076,6 +1100,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("130", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
@@ -1086,7 +1111,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1226,6 +1252,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1237,6 +1264,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("100", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     }
@@ -1253,7 +1281,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1395,6 +1424,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1402,7 +1432,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -1418,7 +1449,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1559,6 +1591,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1566,7 +1599,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -1580,7 +1614,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -1594,7 +1629,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1725,6 +1761,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -1733,7 +1770,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -1741,7 +1779,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         assetsAmount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1864,6 +1903,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -1876,7 +1916,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1998,6 +2039,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -2012,7 +2054,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -2026,7 +2069,8 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]

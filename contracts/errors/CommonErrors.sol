@@ -6,4 +6,9 @@ abstract contract CommonErrors {
      * @dev Reverts if an address provided is zero.
      */
     error InvalidZeroAddress();
+
+    /**
+     * @dev Reverts if any address matches another.
+     */
+    error IdenticalAddresses();
 }

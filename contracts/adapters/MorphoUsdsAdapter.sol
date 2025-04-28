@@ -11,10 +11,12 @@ import {ConvertModule} from "../modules/ConvertModule.sol";
 import {IMorpho, MarketParams, Id, Market, Position} from "../interfaces/morpho/IMorpho.sol";
 import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
 
+import "hardhat/console.sol";
+
 /**
  * @title MorphoUsdsAdapter
  * @notice Adapter contract for migrating user positions from Morpho into Compound III (Comet),
- *         with native support for USDS markets and stablecoin conversion.
+ *         with support for USDS markets and stablecoin conversion.
  *
  * @dev This contract implements the `IProtocolAdapter` interface and is designed to be used via
  *      delegatecall from the `MigratorV2` contract. It facilitates the seamless transfer of debt
@@ -26,7 +28,6 @@ import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
  *      - Handles repayment of borrow positions in the Morpho protocol.
  *      - Executes token swaps (via Uniswap V3) or stablecoin conversions (DAI ⇄ USDS) as needed.
  *      - Withdraws and optionally converts Morpho collateral tokens before supplying them to Comet.
- *      - Automatically wraps native tokens (ETH → WETH) when required.
  *      - Supports Uniswap-based flash loan repayments, with fallback logic to pull funds from the user’s Comet balance.
  *
  *      USDS-Specific Logic:
@@ -87,6 +88,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         address usds;
         address morphoLendingPool;
         bool isFullMigration;
+        bool useSwapRouter02;
     }
 
     /**
@@ -155,10 +157,14 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     constructor(
         DeploymentParams memory deploymentParams
     )
-        SwapModule(deploymentParams.uniswapRouter)
+        SwapModule(deploymentParams.uniswapRouter, deploymentParams.useSwapRouter02)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
         if (deploymentParams.morphoLendingPool == address(0)) revert InvalidZeroAddress();
+
+        // if (deploymentParams.morphoLendingPool == deploymentParams.uniswapRouter) revert IdenticalAddresses();
+
+        // @TODO: Maybe need to add a check for the DAI and USDS addresses to be different from the Morpho pool and data provider
 
         LENDING_POOL = IMorpho(deploymentParams.morphoLendingPool);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
@@ -175,7 +181,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *  2. Iterates through all borrow positions and calls `repayBorrow`, which handles repayment logic
      *     including optional swaps or stablecoin conversion.
      *  3. Iterates through all collateral positions and calls `migrateCollateral`, which handles withdrawal
-     *     from Morpho and supply to Comet. The migration may involve native token wrapping, swaps via
+     *     from Morpho and supply to Comet. The migration may involve swaps via
      *     Uniswap V3, or DAI ⇄ USDS conversion.
      *  4. If flash loan data is provided, settles the flash loan using `_repayFlashloan`, covering
      *     repayment either from contract balance or the user’s Comet account.
@@ -194,24 +200,25 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         address user,
         address comet,
         bytes calldata migrationData,
-        bytes calldata flashloanData
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
     ) external {
         // Decode the migration data into an SparkPosition struct
         MorphoPosition memory position = abi.decode(migrationData, (MorphoPosition));
 
         // Repay each borrow position
         for (uint256 i = 0; i < position.borrows.length; i++) {
-            repayBorrow(user, position.borrows[i]);
+            _repayBorrow(user, position.borrows[i]);
         }
 
         // Migrate each collateral position
         for (uint256 i = 0; i < position.collateral.length; i++) {
-            migrateCollateral(user, comet, position.collateral[i]);
+            _migrateCollateral(user, comet, position.collateral[i]);
         }
 
-        // Repay flashloan
+        // Repay the flash loan if it has been used
         if (flashloanData.length > 0) {
-            _repayFlashloan(user, comet, flashloanData);
+            _repayFlashloan(user, comet, flashloanData, preBaseAssetBalance);
         }
     }
 
@@ -247,28 +254,71 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * - May call `_convertUsdsToDai()` internally.
      * - Completes repayment with `safeTransfer()` to `flashLiquidityPool`.
      */
-    function _repayFlashloan(address user, address comet, bytes calldata flashloanData) internal {
-        (address flashLiquidityPool, address flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
+    function _repayFlashloan(
+        address user,
+        address comet,
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
+    ) internal {
+        (address flashLiquidityPool, IERC20 flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
             flashloanData,
-            (address, address, uint256)
+            (address, IERC20, uint256)
         );
 
         address executor = address(this);
-        uint256 balance = IERC20(flashBaseToken).balanceOf(executor);
+        uint256 ownBaseTokenBalance = flashBaseToken.balanceOf(executor);
+        // Calculate the shortfall amount to be converted before repayment flashloan
+        uint256 shortfallAmount = flashAmountWithFee - ownBaseTokenBalance;
 
-        if (balance < flashAmountWithFee) {
-            address cometBaseToken = IComet(comet).baseToken();
+        IERC20 cometBaseToken = IComet(comet).baseToken();
+
+        if (ownBaseTokenBalance < flashAmountWithFee) {
+            // Calculate the amount to withdraw from the user's Comet account
+            uint256 withdrawAmount = _calculateWithdrawAmount(comet, user, ownBaseTokenBalance, flashAmountWithFee);
+
             // If the flash loan token is DAI and the Comet base token is USDS, convert USDS to DAI
             if (cometBaseToken == USDS && flashBaseToken == DAI) {
-                IComet(comet).withdrawFrom(user, executor, USDS, (flashAmountWithFee - balance));
-                _convertUsdsToDai(flashAmountWithFee - balance);
+                IComet(comet).withdrawFrom(user, executor, USDS, withdrawAmount);
+                _convertUsdsToDai(shortfallAmount);
             } else {
                 // Withdraw the required amount from the user's Comet account
-                IComet(comet).withdrawFrom(user, executor, cometBaseToken, (flashAmountWithFee - balance));
+                IComet(comet).withdrawFrom(user, executor, flashBaseToken, withdrawAmount);
             }
         }
         // Repay the flash loan
-        IERC20(flashBaseToken).safeTransfer(flashLiquidityPool, flashAmountWithFee);
+        flashBaseToken.safeTransfer(flashLiquidityPool, flashAmountWithFee);
+
+        // Check residual base asset balance
+        uint256 residualBaseAsset = cometBaseToken.balanceOf(executor) - preBaseAssetBalance;
+
+        // If there is a residual base asset balance, supply it back to the user's Comet account
+        if (residualBaseAsset > 0) {
+            cometBaseToken.safeIncreaseAllowance(comet, residualBaseAsset);
+            IComet(comet).supplyTo(user, cometBaseToken, residualBaseAsset);
+        }
+    }
+
+    function _calculateWithdrawAmount(
+        address comet,
+        address user,
+        uint256 ownBaseTokenBalance,
+        uint256 repayFlashloanAmount
+    ) internal view returns (uint256 withdrawAmount) {
+        uint256 userBalanceBaseToken = IComet(comet).balanceOf(user);
+        uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
+        uint256 shortfallAmount = repayFlashloanAmount - ownBaseTokenBalance;
+
+        if (
+            (userBalanceBaseToken == 0 && baseBorrowMin <= shortfallAmount) ||
+            userBalanceBaseToken > shortfallAmount ||
+            ((shortfallAmount > userBalanceBaseToken ? (shortfallAmount - userBalanceBaseToken) : 0) > baseBorrowMin)
+        ) {
+            withdrawAmount = shortfallAmount;
+        } else if (shortfallAmount > userBalanceBaseToken && baseBorrowMin > userBalanceBaseToken) {
+            withdrawAmount = (baseBorrowMin - userBalanceBaseToken) + shortfallAmount;
+        } else {
+            withdrawAmount = baseBorrowMin;
+        }
     }
 
     /**
@@ -300,7 +350,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * - May perform a Uniswap V3 swap or USDS → DAI conversion.
      * - May revert with `DebtNotCleared` if full migration check fails.
      */
-    function repayBorrow(address user, MorphoBorrow memory borrow) internal {
+    function _repayBorrow(address user, MorphoBorrow memory borrow) internal {
         MarketParams memory marketParams = LENDING_POOL.idToMarketParams(borrow.marketId);
 
         LENDING_POOL.accrueInterest(marketParams); // call
@@ -319,8 +369,8 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
 
         // If a swap is required to obtain the repayment tokens
         if (borrow.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
-            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
+            IERC20 tokenIn = _decodeTokenIn(borrow.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(borrow.swapParams.path);
             // If the swap is from USDS to DAI, convert USDS to DAI
             if (
                 tokenIn == ConvertModule.USDS &&
@@ -377,7 +427,6 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *     - If the Comet base token is USDS but the output token is DAI, converts DAI → USDS.
      *  5. Supplies the resulting token (USDS, DAI, or other) to the Compound III market via `supplyTo()`.
      *  6. If no swap is needed:
-     *     - Wraps the native token if `collateralAsset` is the native ETH.
      *     - Otherwise, supplies the token directly.
      *
      * @param user The address of the user whose Morpho collateral is being migrated.
@@ -394,9 +443,8 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * Effects:
      * - May trigger withdrawals from Morpho.
      * - May invoke Uniswap V3 swaps or DAI → USDS conversions.
-     * - May wrap native ETH and approve/supply to the Comet contract.
      */
-    function migrateCollateral(address user, address comet, MorphoCollateral memory collateral) internal {
+    function _migrateCollateral(address user, address comet, MorphoCollateral memory collateral) internal {
         MarketParams memory marketParams = LENDING_POOL.idToMarketParams(collateral.marketId);
         Position memory position = LENDING_POOL.position(collateral.marketId, user);
 
@@ -406,19 +454,19 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
             : collateral.assetsAmount;
 
         // Get the underlying asset address of the collateral token
-        address collateralAsset = marketParams.collateralToken;
+        IERC20 collateralAsset = IERC20(marketParams.collateralToken);
 
         // Withdraw the collateral from Morpho
         LENDING_POOL.withdrawCollateral(marketParams, withdrawAmount, user, address(this));
 
         // If a swap is required to obtain the migration tokens
         if (collateral.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(collateral.swapParams.path);
-            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
+            IERC20 tokenIn = _decodeTokenIn(collateral.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(collateral.swapParams.path);
             // If the swap is from DAI to USDS, convert DAI to USDS
             if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
                 _convertDaiToUsds(withdrawAmount);
-                IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, withdrawAmount);
+                ConvertModule.USDS.safeIncreaseAllowance(comet, withdrawAmount);
                 IComet(comet).supplyTo(user, ConvertModule.USDS, withdrawAmount);
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
@@ -427,22 +475,22 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         recipient: address(this),
                         amountIn: withdrawAmount,
                         amountOutMinimum: collateral.swapParams.amountOutMinimum,
-                        deadline: block.timestamp
+                        deadline: collateral.swapParams.deadline
                     })
                 );
 
                 if (tokenOut == ConvertModule.DAI && IComet(comet).baseToken() == ConvertModule.USDS) {
                     _convertDaiToUsds(amountOut);
-                    IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, amountOut);
+                    ConvertModule.USDS.safeIncreaseAllowance(comet, amountOut);
                     IComet(comet).supplyTo(user, ConvertModule.USDS, amountOut);
                 } else {
-                    IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+                    tokenOut.safeIncreaseAllowance(comet, amountOut);
                     IComet(comet).supplyTo(user, tokenOut, amountOut);
                 }
             }
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(collateralAsset).safeIncreaseAllowance(comet, withdrawAmount);
+            collateralAsset.safeIncreaseAllowance(comet, withdrawAmount);
             IComet(comet).supplyTo(user, collateralAsset, withdrawAmount);
         }
     }
@@ -463,7 +511,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     function _isDebtCleared(Id id, address user) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset
         Position memory position = LENDING_POOL.position(id, user);
-        // Debt is cleared if the total debt balance is zero
-        return position.borrowShares == 0;
+        // Debt is cleared if the debt balance is zero
+        isCleared = (position.borrowShares == 0);
     }
 }

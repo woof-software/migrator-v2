@@ -25,7 +25,6 @@ import {ConvertModule} from "../modules/ConvertModule.sol";
  *      - Repayment of Spark variable debt using either pre-held tokens, swapped assets, or USDS → DAI conversions.
  *      - Withdrawal and migration of Spark collateral (spTokens) into the target Comet market, including:
  *          - Token swaps (via Uniswap V3),
- *          - Native token wrapping (ETH → WETH),
  *          - DAI → USDS conversion (for USDS-based markets).
  *      - Flash loan repayment support for liquidity management during migrations, with fallback withdrawals from user balances in Comet.
  *      - Full or partial migrations, enforced via the `isFullMigration` deployment flag.
@@ -72,6 +71,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         address sparkLendingPool;
         address sparkDataProvider;
         bool isFullMigration;
+        bool useSwapRouter02;
     }
 
     /**
@@ -146,11 +146,15 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     constructor(
         DeploymentParams memory deploymentParams
     )
-        SwapModule(deploymentParams.uniswapRouter)
+        SwapModule(deploymentParams.uniswapRouter, deploymentParams.useSwapRouter02)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
         if (deploymentParams.sparkLendingPool == address(0) || deploymentParams.sparkDataProvider == address(0))
             revert InvalidZeroAddress();
+
+        // if (deploymentParams.sparkLendingPool == deploymentParams.sparkDataProvider) revert IdenticalAddresses();
+
+        //@TODO: Maybe need to add a check for the DAI and USDS addresses to be different from the Spark pool and data provider
 
         LENDING_POOL = ISparkPool(deploymentParams.sparkLendingPool);
         DATA_PROVIDER = ISparkPoolDataProvider(deploymentParams.sparkDataProvider);
@@ -171,7 +175,6 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *     from Spark and deposit them into Compound III. This step may involve:
      *     - Converting tokens (e.g., DAI → USDS),
      *     - Performing Uniswap V3 swaps,
-     *     - Wrapping native tokens into their ERC-20 equivalents (e.g., ETH → WETH).
      *  4. If `flashloanData` is provided, the function invokes `_repayFlashloan` to settle the flash loan debt.
      *     Repayment can happen from contract balance or by withdrawing the needed amount from the user’s
      *     balance in Compound III.
@@ -190,7 +193,8 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         address user,
         address comet,
         bytes calldata migrationData,
-        bytes calldata flashloanData
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
     ) external {
         // Decode the migration data into an SparkPosition struct
         SparkPosition memory position = abi.decode(migrationData, (SparkPosition));
@@ -205,9 +209,9 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
             _migrateCollateral(user, comet, position.collateral[i]);
         }
 
-        // Repay flashloan
+        // Repay the flash loan if it has been used
         if (flashloanData.length > 0) {
-            _repayFlashloan(user, comet, flashloanData);
+            _repayFlashloan(user, comet, flashloanData, preBaseAssetBalance);
         }
     }
 
@@ -240,28 +244,71 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * - May trigger `_convertUsdsToDai()` if conversion is necessary.
      * - Ends with `safeTransfer` to the liquidity pool, repaying the flash loan.
      */
-    function _repayFlashloan(address user, address comet, bytes calldata flashloanData) internal {
-        (address flashLiquidityPool, address flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
+    function _repayFlashloan(
+        address user,
+        address comet,
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
+    ) internal {
+        (address flashLiquidityPool, IERC20 flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
             flashloanData,
-            (address, address, uint256)
+            (address, IERC20, uint256)
         );
 
         address executor = address(this);
-        uint256 balance = IERC20(flashBaseToken).balanceOf(executor);
+        uint256 ownBaseTokenBalance = flashBaseToken.balanceOf(executor);
+        // Calculate the shortfall amount to be converted before repayment flashloan
+        uint256 shortfallAmount = flashAmountWithFee - ownBaseTokenBalance;
 
-        if (balance < flashAmountWithFee) {
-            address cometBaseToken = IComet(comet).baseToken();
+        IERC20 cometBaseToken = IComet(comet).baseToken();
+
+        if (ownBaseTokenBalance < flashAmountWithFee) {
+            // Calculate the amount to withdraw from the user's Comet account
+            uint256 withdrawAmount = _calculateWithdrawAmount(comet, user, ownBaseTokenBalance, flashAmountWithFee);
+
             // If the flash loan token is DAI and the Comet base token is USDS, convert USDS to DAI
             if (cometBaseToken == USDS && flashBaseToken == DAI) {
-                IComet(comet).withdrawFrom(user, executor, USDS, (flashAmountWithFee - balance));
-                _convertUsdsToDai(flashAmountWithFee - balance);
+                IComet(comet).withdrawFrom(user, executor, USDS, withdrawAmount);
+                _convertUsdsToDai(shortfallAmount);
             } else {
                 // Withdraw the required amount from the user's Comet account
-                IComet(comet).withdrawFrom(user, executor, cometBaseToken, (flashAmountWithFee - balance));
+                IComet(comet).withdrawFrom(user, executor, flashBaseToken, withdrawAmount);
             }
         }
         // Repay the flash loan
-        IERC20(flashBaseToken).safeTransfer(flashLiquidityPool, flashAmountWithFee);
+        flashBaseToken.safeTransfer(flashLiquidityPool, flashAmountWithFee);
+
+        // Check residual base asset balance
+        uint256 residualBaseAsset = cometBaseToken.balanceOf(executor) - preBaseAssetBalance;
+
+        // If there is a residual base asset balance, supply it back to the user's Comet account
+        if (residualBaseAsset > 0) {
+            cometBaseToken.safeIncreaseAllowance(comet, residualBaseAsset);
+            IComet(comet).supplyTo(user, cometBaseToken, residualBaseAsset);
+        }
+    }
+
+    function _calculateWithdrawAmount(
+        address comet,
+        address user,
+        uint256 ownBaseTokenBalance,
+        uint256 repayFlashloanAmount
+    ) internal view returns (uint256 withdrawAmount) {
+        uint256 userBalanceBaseToken = IComet(comet).balanceOf(user);
+        uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
+        uint256 shortfallAmount = repayFlashloanAmount - ownBaseTokenBalance;
+
+        if (
+            (userBalanceBaseToken == 0 && baseBorrowMin <= shortfallAmount) ||
+            userBalanceBaseToken > shortfallAmount ||
+            ((shortfallAmount > userBalanceBaseToken ? (shortfallAmount - userBalanceBaseToken) : 0) > baseBorrowMin)
+        ) {
+            withdrawAmount = shortfallAmount;
+        } else if (shortfallAmount > userBalanceBaseToken && baseBorrowMin > userBalanceBaseToken) {
+            withdrawAmount = (baseBorrowMin - userBalanceBaseToken) + shortfallAmount;
+        } else {
+            withdrawAmount = baseBorrowMin;
+        }
     }
 
     /**
@@ -307,8 +354,8 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
 
         // If a swap is required to obtain the repayment tokens
         if (borrow.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
-            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
+            IERC20 tokenIn = _decodeTokenIn(borrow.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(borrow.swapParams.path);
 
             if (
                 tokenIn == ConvertModule.USDS &&
@@ -339,10 +386,10 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         }
 
         // Get the underlying asset address of the debt token
-        address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
+        IERC20 underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Spark Lending Pool to spend the repayment amount
-        IERC20(underlyingAsset).safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
+        underlyingAsset.safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
@@ -363,7 +410,6 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * - Direct supply of the underlying asset if no swap is needed.
      * - Token swap using Uniswap V3 for cases when the Spark collateral must be converted
      *   to a supported token in Compound III.
-     * - Special handling for native token wrapping (e.g., ETH → WETH).
      * - USDS migration via DAI proxy mechanism:
      *     - If the swap result is DAI and the Compound market uses USDS as base token,
      *       DAI is converted to USDS before supply.
@@ -378,7 +424,6 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * Requirements:
      * - The user must approve the contract to transfer their `spToken`.
      * - If `swapParams.path.length > 0`, it must be valid and executable.
-     * - If underlying token is native (ETH), the contract will automatically wrap it.
      * - For DAI → USDS conversion, `ConvertModule` must be configured with valid converter.
      *
      * Effects:
@@ -394,18 +439,18 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         // Transfer the collateral tokens from the user to this contract
         ISpToken(collateral.spToken).transferFrom(user, address(this), spTokenAmount);
         // Get the underlying asset address of the collateral token
-        address underlyingAsset = ISpToken(collateral.spToken).UNDERLYING_ASSET_ADDRESS();
+        IERC20 underlyingAsset = ISpToken(collateral.spToken).UNDERLYING_ASSET_ADDRESS();
         // Withdraw the collateral from Spark
         LENDING_POOL.withdraw(underlyingAsset, spTokenAmount, address(this));
 
         // If a swap is required to obtain the migration tokens
         if (collateral.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(collateral.swapParams.path);
-            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
+            IERC20 tokenIn = _decodeTokenIn(collateral.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(collateral.swapParams.path);
             // If the swap is from DAI to USDS, convert DAI to USDS
             if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
                 _convertDaiToUsds(spTokenAmount);
-                IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, spTokenAmount);
+                ConvertModule.USDS.safeIncreaseAllowance(comet, spTokenAmount);
                 IComet(comet).supplyTo(user, ConvertModule.USDS, spTokenAmount);
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
@@ -414,23 +459,23 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         recipient: address(this),
                         amountIn: spTokenAmount,
                         amountOutMinimum: collateral.swapParams.amountOutMinimum,
-                        deadline: block.timestamp
+                        deadline: collateral.swapParams.deadline
                     })
                 );
 
                 if (tokenOut == ConvertModule.DAI && IComet(comet).baseToken() == ConvertModule.USDS) {
                     _convertDaiToUsds(amountOut);
-                    IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, amountOut);
+                    ConvertModule.USDS.safeIncreaseAllowance(comet, amountOut);
                     IComet(comet).supplyTo(user, ConvertModule.USDS, amountOut);
                 } else {
-                    IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+                    tokenOut.safeIncreaseAllowance(comet, amountOut);
                     IComet(comet).supplyTo(user, tokenOut, amountOut);
                 }
             }
 
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(underlyingAsset).safeIncreaseAllowance(comet, spTokenAmount);
+            underlyingAsset.safeIncreaseAllowance(comet, spTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, spTokenAmount);
         }
     }
@@ -448,13 +493,10 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @return isCleared A boolean value indicating whether the total debt (stable + variable)
      *         for the specified asset is fully cleared. Returns `true` if repaid, `false` otherwise.
      */
-    function _isDebtCleared(address user, address asset) internal view returns (bool isCleared) {
+    function _isDebtCleared(address user, IERC20 asset) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset
-        (, uint256 currentStableDebt, uint256 currentVariableDebt, , , , , , ) = DATA_PROVIDER.getUserReserveData(
-            asset,
-            user
-        );
-        // Debt is cleared if the total debt balance is zero
-        return (currentStableDebt + currentVariableDebt) == 0;
+        (, , uint256 currentVariableDebt, , , , , , ) = DATA_PROVIDER.getUserReserveData(asset, user);
+        // Debt is cleared if the debt balance is zero
+        isCleared = (currentVariableDebt == 0);
     }
 }

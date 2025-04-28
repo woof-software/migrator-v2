@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {ISwapRouter02} from "../interfaces/@uniswap/v3-periphery/ISwapRouter02.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NegativeTesting} from "./NegativeTesting.sol";
 
@@ -20,7 +20,7 @@ interface IAdapter {
  * @dev This mock does not perform actual price calculations or route through multiple pools.
  *      It assumes a 1:1 swap rate between tokens for simplicity.
  */
-contract MockSwapRouter is ISwapRouter, NegativeTesting {
+contract MockSwapRouter02 is ISwapRouter02, NegativeTesting {
     address public constant NATIVE_TOKEN_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     address public adapter;

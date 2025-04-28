@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 pragma solidity 0.8.28;
 
-interface IDebtToken is IERC20 {
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+interface IDebtToken {
     /**
      * @notice Updates the borrow allowance of a user on the specific debt token.
      * @param delegatee The address receiving the delegated borrowing power
@@ -16,5 +16,5 @@ interface IDebtToken is IERC20 {
      * @notice Returns the address of the underlying asset of this debtToken (E.g. WETH for debtWETH)
      * @return The address of the underlying asset
      */
-    function UNDERLYING_ASSET_ADDRESS() external view returns (address);
+    function UNDERLYING_ASSET_ADDRESS() external view returns (IERC20);
 }

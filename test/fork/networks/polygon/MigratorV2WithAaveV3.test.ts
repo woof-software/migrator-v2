@@ -10,7 +10,8 @@ import {
     setBalance,
     parseUnits,
     loadFixture,
-    logger
+    logger,
+    AddressZero
 } from "../../../helpers"; // Adjust the path as needed
 
 import {
@@ -61,8 +62,8 @@ const FEE_500 = ethers.utils.hexZeroPad(ethers.utils.hexlify(500), 3); // 0.05% 
 const FEE_100 = ethers.utils.hexZeroPad(ethers.utils.hexlify(100), 3); // 0.01% 0x0064
 
 const POSITION_ABI = [
-    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 amountInMaximum) swapParams)[]",
-    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 amountOutMinimum) swapParams)[]"
+    "tuple(address debtToken, uint256 amount, tuple(bytes path, uint256 deadline, uint256 amountInMaximum) swapParams)[]",
+    "tuple(address aToken, uint256 amount, tuple(bytes path, uint256 deadline, uint256 amountOutMinimum) swapParams)[]"
 ];
 
 const SLIPPAGE_BUFFER_PERCENT = 115; // 15% slippage buffer
@@ -159,7 +160,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             // wrappedNativeToken: tokenAddresses.WMATIC,
             aaveLendingPool: aaveContractAddresses.pool,
             aaveDataProvider: aaveContractAddresses.protocolDataProvider,
-            isFullMigration: true
+            isFullMigration: true,
+            useSwapRouter02: false
         })) as AaveV3UsdsAdapter;
         await aaveV3Adapter.deployed();
 
@@ -180,7 +182,9 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             owner.address,
             adapters,
             comets,
-            flashData
+            flashData,
+            AddressZero,
+            AddressZero
         )) as MigratorV2;
         await migratorV2.deployed();
 
@@ -323,6 +327,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -330,7 +335,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     },
                     {
@@ -342,6 +348,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_100,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("70", tokenDecimals.USDCe).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     },
@@ -354,6 +361,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("265", tokenDecimals.USDCe)
                                 .mul(SLIPPAGE_BUFFER_PERCENT)
                                 .div(100)
@@ -370,7 +378,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -382,7 +391,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -396,7 +406,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -550,6 +561,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -561,6 +573,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("555", tokenDecimals.USDCe)
                                 .mul(SLIPPAGE_BUFFER_PERCENT)
                                 .div(100)
@@ -573,7 +586,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -736,6 +750,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -747,6 +762,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_100,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("70", tokenDecimals.USDCe).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     },
@@ -759,6 +775,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("130", tokenDecimals.USDCe)
                                 .mul(SLIPPAGE_BUFFER_PERCENT)
                                 .div(100)
@@ -775,7 +792,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -789,7 +807,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -928,6 +947,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -935,7 +955,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -945,7 +966,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1080,6 +1102,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1091,6 +1114,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_100,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("130", tokenDecimals.USDCe)
                                 .mul(SLIPPAGE_BUFFER_PERCENT)
                                 .div(100)
@@ -1103,7 +1127,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1240,6 +1265,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1251,6 +1277,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_100,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("70", tokenDecimals.USDCe).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
                         }
                     },
@@ -1259,7 +1286,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -1269,7 +1297,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1406,6 +1435,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1417,6 +1447,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_100,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
+                            deadline,
                             amountInMaximum: parseUnits("100", tokenDecimals.USDCe)
                                 .mul(SLIPPAGE_BUFFER_PERCENT)
                                 .div(100)
@@ -1433,7 +1464,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1568,6 +1600,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1575,7 +1608,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -1589,7 +1623,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1727,6 +1762,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [
                     {
@@ -1734,7 +1770,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountInMaximum: 0
+                            deadline,
+                            amountInMaximum: 1n
                         }
                     }
                 ],
@@ -1748,7 +1785,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -1762,7 +1800,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -1888,6 +1927,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -1896,7 +1936,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -1904,7 +1945,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                         amount: MaxUint256,
                         swapParams: {
                             path: "0x",
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -2026,6 +2068,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -2038,7 +2081,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -2052,7 +2096,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]
@@ -2173,6 +2218,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
 
             logger("userBalancesBefore:", userBalancesBefore);
 
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
             const position = {
                 borrows: [],
                 collaterals: [
@@ -2185,7 +2231,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     },
                     {
@@ -2201,7 +2248,8 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                                 FEE_500,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDCe, 20)
                             ]),
-                            amountOutMinimum: 0
+                            deadline,
+                            amountOutMinimum: 1n
                         }
                     }
                 ]

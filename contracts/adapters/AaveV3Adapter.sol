@@ -37,7 +37,6 @@ import {SwapModule} from "../modules/SwapModule.sol";
  *      Swap Support:
  *      - Leverages `SwapModule` to perform swaps through Uniswap V3.
  *      - Supports both `ExactInput` (for collateral) and `ExactOutput` (for borrow repayments).
- *      - Handles native asset wrapping (ETH → WETH) if needed for Comet compatibility.
  *
  *      Constructor Configuration:
  *      - Takes deployment parameters including router, Aave pool contracts, WETH, and migration mode flag.
@@ -75,6 +74,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
         address aaveLendingPool;
         address aaveDataProvider;
         bool isFullMigration;
+        bool useSwapRouter02;
     }
 
     /**
@@ -116,6 +116,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
 
     /// @notice Boolean indicating whether the migration is a full migration
     bool public immutable IS_FULL_MIGRATION;
+
     /**
      * @notice Aave V3 Lending Pool contract address
      */
@@ -140,14 +141,21 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * @param deploymentParams Struct containing the deployment parameters:
      * - uniswapRouter Address of the Uniswap V3 SwapRouter contract
      * - daiUsdsConverter Address of the DAI to USDS converter contract
-     * - wrappedNativeToken Address of the wrapped native token (e.g., WETH)
      * - aaveLendingPool Address of the Aave V3 Lending Pool contract
      * - aaveDataProvider Address of the Aave V3 Data Provider contract
      * @dev Reverts if any of the provided addresses are zero
      */
-    constructor(DeploymentParams memory deploymentParams) SwapModule(deploymentParams.uniswapRouter) {
+    constructor(
+        DeploymentParams memory deploymentParams
+    ) SwapModule(deploymentParams.uniswapRouter, deploymentParams.useSwapRouter02) {
         if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.aaveDataProvider == address(0))
             revert InvalidZeroAddress();
+
+        // if (
+        //     deploymentParams.aaveLendingPool == deploymentParams.aaveDataProvider ||
+        //     deploymentParams.uniswapRouter == deploymentParams.aaveLendingPool ||
+        //     deploymentParams.uniswapRouter == deploymentParams.aaveDataProvider
+        // ) revert IdenticalAddresses();
 
         LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
         DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
@@ -165,8 +173,7 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      *  2. Iterates through each borrow and calls `_repayBorrow` to repay the user's debt on Aave V3.
      *     This may involve swaps via Uniswap V3.
      *  3. Iterates through each collateral item and calls `_migrateCollateral` to withdraw it from Aave V3
-     *     and supply it into the corresponding Compound III market. This may include wrapping native tokens
-     *     or swaps via Uniswap V3.
+     *     and supply it into the corresponding Compound III market. This may include swaps via Uniswap V3.
      *  4. If flash loan data is provided, it settles the flash loan debt via `_repayFlashloan`, either from
      *     the contract balance or by withdrawing from the user's Compound III account.
      *
@@ -184,7 +191,8 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
         address user,
         address comet,
         bytes calldata migrationData,
-        bytes calldata flashloanData
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
     ) external {
         // Decode the migration data into an AaveV3Position struct
         AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
@@ -199,9 +207,9 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
             _migrateCollateral(user, comet, position.collaterals[i]);
         }
 
-        // Repay flashloan
+        // Repay the flash loan if it has been used
         if (flashloanData.length > 0) {
-            _repayFlashloan(user, comet, flashloanData);
+            _repayFlashloan(user, comet, flashloanData, preBaseAssetBalance);
         }
     }
 
@@ -235,22 +243,64 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * Reverts:
      * - If the repayment cannot be fulfilled due to insufficient balance or failed transfer.
      */
-    function _repayFlashloan(address user, address comet, bytes calldata flashloanData) internal {
-        (address flashLiquidityPool, address flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
+    function _repayFlashloan(
+        address user,
+        address comet,
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
+    ) internal {
+        (address flashLiquidityPool, IERC20 flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
             flashloanData,
-            (address, address, uint256)
+            (address, IERC20, uint256)
         );
 
         address executor = address(this);
-        uint256 balance = IERC20(flashBaseToken).balanceOf(executor);
+        uint256 ownBaseTokenBalance = flashBaseToken.balanceOf(executor);
 
-        if (balance < flashAmountWithFee) {
+        IERC20 cometBaseToken = IComet(comet).baseToken();
+
+        if (ownBaseTokenBalance < flashAmountWithFee) {
+            // Calculate the amount to withdraw from the user's Comet account
+            uint256 withdrawAmount = _calculateWithdrawAmount(comet, user, ownBaseTokenBalance, flashAmountWithFee);
+
             // Withdraw the required amount from the user's Comet account
-            IComet(comet).withdrawFrom(user, executor, flashBaseToken, (flashAmountWithFee - balance));
+            IComet(comet).withdrawFrom(user, executor, flashBaseToken, withdrawAmount);
         }
 
         // Repay the flash loan
-        IERC20(flashBaseToken).safeTransfer(flashLiquidityPool, flashAmountWithFee);
+        flashBaseToken.safeTransfer(flashLiquidityPool, flashAmountWithFee);
+
+        // Check residual base asset balance
+        uint256 residualBaseAsset = cometBaseToken.balanceOf(executor) - preBaseAssetBalance;
+
+        // If there is a residual base asset balance, supply it back to the user's Comet account
+        if (residualBaseAsset > 0) {
+            cometBaseToken.safeIncreaseAllowance(comet, residualBaseAsset);
+            IComet(comet).supplyTo(user, cometBaseToken, residualBaseAsset);
+        }
+    }
+
+    function _calculateWithdrawAmount(
+        address comet,
+        address user,
+        uint256 ownBaseTokenBalance,
+        uint256 repayFlashloanAmount
+    ) internal view returns (uint256 withdrawAmount) {
+        uint256 userBalanceBaseToken = IComet(comet).balanceOf(user);
+        uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
+        uint256 shortfallAmount = repayFlashloanAmount - ownBaseTokenBalance;
+
+        if (
+            (userBalanceBaseToken == 0 && baseBorrowMin <= shortfallAmount) ||
+            userBalanceBaseToken > shortfallAmount ||
+            ((shortfallAmount > userBalanceBaseToken ? (shortfallAmount - userBalanceBaseToken) : 0) > baseBorrowMin)
+        ) {
+            withdrawAmount = shortfallAmount;
+        } else if (shortfallAmount > userBalanceBaseToken && baseBorrowMin > userBalanceBaseToken) {
+            withdrawAmount = (baseBorrowMin - userBalanceBaseToken) + shortfallAmount;
+        } else {
+            withdrawAmount = baseBorrowMin;
+        }
     }
 
     /**
@@ -306,16 +356,16 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
                     recipient: address(this),
                     amountOut: repayAmount,
                     amountInMaximum: borrow.swapParams.amountInMaximum,
-                    deadline: block.timestamp
+                    deadline: borrow.swapParams.deadline
                 })
             );
         }
 
         // Get the underlying asset address of the debt token
-        address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
+        IERC20 underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Aave Lending Pool to spend the repayment amount
-        IERC20(underlyingAsset).safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
+        underlyingAsset.safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
@@ -337,11 +387,9 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * 3. Calls Aave’s `withdraw()` to redeem underlying tokens to this contract.
      * 4. Depending on the swap parameters:
      *    - If `swapParams.path.length > 0`, performs a Uniswap V3 swap.
-     *    - If swap is from native token (`NATIVE_TOKEN`), wraps it to WETH.
      *    - If no swap is required, directly supplies to Compound III.
      *
      * Special handling:
-     * - The function wraps native ETH into WETH before supplying if needed.
      * - Uses `safeIncreaseAllowance` before calling `supplyTo()` on the Comet contract.
      *
      * @param user The address of the user whose collateral is being migrated.
@@ -367,13 +415,13 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
         // Transfer the collateral tokens from the user to this contract
         IAToken(collateral.aToken).transferFrom(user, address(this), aTokenAmount);
         // Get the underlying asset address of the collateral token
-        address underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
+        IERC20 underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
         // Withdraw the collateral from Aave V3
         LENDING_POOL.withdraw(underlyingAsset, aTokenAmount, address(this));
 
         // If a swap is required to obtain the migration tokens
         if (collateral.swapParams.path.length > 0) {
-            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(collateral.swapParams.path);
 
             uint256 amountOut = _swapCollateralToCompoundToken(
                 ISwapRouter.ExactInputParams({
@@ -381,17 +429,17 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
                     recipient: address(this),
                     amountIn: aTokenAmount,
                     amountOutMinimum: collateral.swapParams.amountOutMinimum,
-                    deadline: block.timestamp
+                    deadline: collateral.swapParams.deadline
                 })
             );
-            IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+            tokenOut.safeIncreaseAllowance(comet, amountOut);
 
             IComet(comet).supplyTo(user, tokenOut, amountOut);
             return;
 
             // If no swap is required, supply the collateral directly to Comet
         } else {
-            IERC20(underlyingAsset).safeIncreaseAllowance(comet, aTokenAmount);
+            underlyingAsset.safeIncreaseAllowance(comet, aTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
         }
     }
@@ -409,13 +457,10 @@ contract AaveV3Adapter is IProtocolAdapter, SwapModule {
      * @return isCleared A boolean value indicating whether the total debt (stable + variable)
      *         for the given asset is zero. Returns `true` if fully repaid, `false` otherwise.
      */
-    function _isDebtCleared(address user, address asset) internal view returns (bool isCleared) {
+    function _isDebtCleared(address user, IERC20 asset) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset
-        (, uint256 currentStableDebt, uint256 currentVariableDebt, , , , , , ) = DATA_PROVIDER.getUserReserveData(
-            asset,
-            user
-        );
-        // Debt is cleared if the total debt balance is zero
-        return (currentStableDebt + currentVariableDebt) == 0;
+        (, , uint256 currentVariableDebt, , , , , , ) = DATA_PROVIDER.getUserReserveData(asset, user);
+        // Debt is cleared if the debt balance is zero
+        isCleared = (currentVariableDebt == 0);
     }
 }

@@ -20,21 +20,17 @@ abstract contract SwapModule is CommonErrors {
 
     struct SwapInputLimitParams {
         bytes path;
+        uint256 deadline;
         uint256 amountInMaximum;
     }
 
     struct SwapOutputLimitParams {
         bytes path;
+        uint256 deadline;
         uint256 amountOutMinimum;
     }
 
     /// --------Constants-------- ///
-
-    /**
-     * @notice Maximum allowable basis points (BPS) for slippage calculations.
-     * @dev 1 BPS = 0.01%, so 10,000 BPS represents 100%.
-     */
-    uint256 public constant MAX_BPS = 10_000;
 
     /**
      * @notice The address of the Uniswap V3 Router contract.
@@ -42,12 +38,10 @@ abstract contract SwapModule is CommonErrors {
      */
     ISwapRouter public immutable UNISWAP_ROUTER;
 
-    /// --------Errors-------- ///
+    /// @notice Boolean indicating whether to use the Uniswap V3 SwapRouter 02
+    bool public immutable USE_SWAP_ROUTER_02;
 
-    /**
-     * @dev Reverts if a swap operation fails.
-     */
-    error SwapFailed();
+    /// --------Errors-------- ///
 
     /**
      * @dev Reverts if an invalid slippage basis points value is provided.
@@ -70,6 +64,12 @@ abstract contract SwapModule is CommonErrors {
      */
     error EmptySwapPath();
 
+    error ZeroAmountInMaximum();
+
+    error ZeroAmountOutMinimum();
+
+    error InvalidSwapDeadline();
+
     /// --------Constructor-------- ///
 
     /**
@@ -77,9 +77,10 @@ abstract contract SwapModule is CommonErrors {
      * @param _uniswapRouter The address of the Uniswap V3 Router contract.
      * @dev Reverts with {InvalidZeroAddress} if the provided address is zero.
      */
-    constructor(address _uniswapRouter) {
+    constructor(address _uniswapRouter, bool useSwapRouter02) {
         if (_uniswapRouter == address(0)) revert InvalidZeroAddress();
         UNISWAP_ROUTER = ISwapRouter(_uniswapRouter);
+        USE_SWAP_ROUTER_02 = useSwapRouter02;
     }
 
     /// --------Functions-------- ///
@@ -90,22 +91,21 @@ abstract contract SwapModule is CommonErrors {
      * @return amountIn The amount of input tokens spent.
      * @dev Reverts with {ZeroAmountOut} if the output token amount is zero.
      * @dev Reverts with {EmptySwapPath} if the swap path provided is empty.
-     * @dev Reverts with {SwapFailed} if the swap operation fails.
      */
     function _swapFlashloanToBorrowToken(
         ISwapRouter.ExactOutputParams memory params
     ) internal returns (uint256 amountIn) {
         if (params.amountOut == 0) revert ZeroAmountOut();
         if (params.path.length == 0) revert EmptySwapPath();
+        if (params.amountInMaximum == 0) revert ZeroAmountInMaximum();
+        if (params.deadline == 0 || params.deadline < block.timestamp) revert InvalidSwapDeadline();
 
-        address tokenOut = _decodeTokenOut(params.path);
+        IERC20 tokenOut = _decodeTokenOut(params.path);
         _approveTokenForSwap(tokenOut);
 
-        try UNISWAP_ROUTER.exactOutput(params) returns (uint256 returnedAmountIn) {
-            // If the call was successful, we save the result
-            amountIn = returnedAmountIn;
-        } catch {
-            // If calling exactOutput in ISwapRouter is not supported, try ISwapRouter02
+        if (!USE_SWAP_ROUTER_02) {
+            amountIn = UNISWAP_ROUTER.exactOutput(params);
+        } else {
             ISwapRouter02.ExactOutputParams memory params02 = ISwapRouter02.ExactOutputParams({
                 path: params.path,
                 recipient: params.recipient,
@@ -113,13 +113,28 @@ abstract contract SwapModule is CommonErrors {
                 amountInMaximum: params.amountInMaximum
             });
 
-            try ISwapRouter02(address(UNISWAP_ROUTER)).exactOutput(params02) returns (uint256 returnedAmountIn02) {
-                amountIn = returnedAmountIn02;
-            } catch {
-                // If both interfaces are not supported, call revert
-                revert("Swap router does not support ISwapRouter or ISwapRouter02");
-            }
+            amountIn = ISwapRouter02(address(UNISWAP_ROUTER)).exactOutput(params02);
         }
+
+        //    try UNISWAP_ROUTER.exactOutput(params) returns (uint256 returnedAmountIn) {
+        //         // If the call was successful, we save the result
+        //         amountIn = returnedAmountIn;
+        //     } catch {
+        //         // If calling exactOutput in ISwapRouter is not supported, try ISwapRouter02
+        //         ISwapRouter02.ExactOutputParams memory params02 = ISwapRouter02.ExactOutputParams({
+        //             path: params.path,
+        //             recipient: params.recipient,
+        //             amountOut: params.amountOut,
+        //             amountInMaximum: params.amountInMaximum
+        //         });
+
+        //         try ISwapRouter02(address(UNISWAP_ROUTER)).exactOutput(params02) returns (uint256 returnedAmountIn02) {
+        //             amountIn = returnedAmountIn02;
+        //         } catch {
+        //             // If both interfaces are not supported, call revert
+        //             revert("Swap router does not support ISwapRouter or ISwapRouter02");
+        //         }
+        //     }
 
         _clearApprove(tokenOut);
     }
@@ -130,22 +145,21 @@ abstract contract SwapModule is CommonErrors {
      * @return amountOut The amount of output tokens received.
      * @dev Reverts with {ZeroAmountIn} if the input token amount is zero.
      * @dev Reverts with {EmptySwapPath} if the swap path provided is empty.
-     * @dev Reverts with {SwapFailed} if the swap operation fails.
      */
     function _swapCollateralToCompoundToken(
         ISwapRouter.ExactInputParams memory params
     ) internal returns (uint256 amountOut) {
         if (params.amountIn == 0) revert ZeroAmountIn();
         if (params.path.length == 0) revert EmptySwapPath();
+        if (params.amountOutMinimum == 0) revert ZeroAmountOutMinimum();
+        if (params.deadline == 0 || params.deadline < block.timestamp) revert InvalidSwapDeadline();
 
-        address tokenIn = _decodeTokenIn(params.path);
+        IERC20 tokenIn = _decodeTokenIn(params.path);
         _approveTokenForSwap(tokenIn);
 
-        try UNISWAP_ROUTER.exactInput(params) returns (uint256 returnedAmountOut) {
-            // If the call was successful, we save the result
-            amountOut = returnedAmountOut;
-        } catch {
-            // If calling exactInput in ISwapRouter is not supported, try ISwapRouter02
+        if (!USE_SWAP_ROUTER_02) {
+            amountOut = UNISWAP_ROUTER.exactInput(params);
+        } else {
             ISwapRouter02.ExactInputParams memory params02 = ISwapRouter02.ExactInputParams({
                 path: params.path,
                 recipient: params.recipient,
@@ -153,33 +167,11 @@ abstract contract SwapModule is CommonErrors {
                 amountOutMinimum: params.amountOutMinimum
             });
 
-            try ISwapRouter02(address(UNISWAP_ROUTER)).exactInput(params02) returns (uint256 returnedAmountOut02) {
-                amountOut = returnedAmountOut02;
-            } catch {
-                // If both interfaces are not supported, call revert
-                revert("Swap router does not support ISwapRouter or ISwapRouter02");
-            }
+            amountOut = ISwapRouter02(address(UNISWAP_ROUTER)).exactInput(params02);
         }
 
         _clearApprove(tokenIn);
     }
-
-    /**
-     * @notice Calculates the maximum allowable slippage amount based on a given percentage in BPS (Basis Points).
-     * @param amount The original amount to calculate slippage on.
-     * @param slippageBps The allowed slippage in Basis Points (BPS), where 10,000 BPS equals 100%.
-     * @return slippageAmount The allowable amount of tokens for slippage.
-     * @dev Reverts with {InvalidSlippageBps} if the provided `slippageBps` exceeds the maximum allowable BPS (MAX_BPS).
-     */
-    // function _calculateSlippageAmount(
-    //     uint256 amount,
-    //     uint256 slippageBps
-    // ) internal pure returns (uint256 slippageAmount) {
-    //     if (slippageBps > MAX_BPS) revert InvalidSlippageBps(slippageBps);
-
-    //     // Calculate the amount of slippage
-    //     slippageAmount = (amount * (MAX_BPS - slippageBps)) / MAX_BPS;
-    // }
 
     /// --------Internal Helper Functions-------- ///
 
@@ -188,8 +180,8 @@ abstract contract SwapModule is CommonErrors {
      * @param token The token to approve for spending.
      * @notice Approves the Uniswap router maximum allowance to spend a token.
      */
-    function _approveTokenForSwap(address token) internal {
-        IERC20(token).forceApprove(address(UNISWAP_ROUTER), type(uint256).max);
+    function _approveTokenForSwap(IERC20 token) internal {
+        token.forceApprove(address(UNISWAP_ROUTER), type(uint256).max);
     }
 
     /**
@@ -197,8 +189,8 @@ abstract contract SwapModule is CommonErrors {
      * @param token The token to clear approval for.
      * @notice Clears the approval of a token for the Uniswap router.
      */
-    function _clearApprove(address token) internal {
-        IERC20(token).forceApprove(address(UNISWAP_ROUTER), 0);
+    function _clearApprove(IERC20 token) internal {
+        token.forceApprove(address(UNISWAP_ROUTER), 0);
     }
 
     /**
@@ -206,7 +198,7 @@ abstract contract SwapModule is CommonErrors {
      * @param path The swap path.
      * @return tokenIn Address of the input token.
      */
-    function _decodeTokenIn(bytes memory path) internal pure returns (address tokenIn) {
+    function _decodeTokenIn(bytes memory path) internal pure returns (IERC20 tokenIn) {
         assembly {
             // Extract the first 20 bytes as the tokenIn address
             tokenIn := mload(add(path, 20))
@@ -218,7 +210,7 @@ abstract contract SwapModule is CommonErrors {
      * @param path The swap path.
      * @return tokenOut Address of the output token.
      */
-    function _decodeTokenOut(bytes memory path) internal pure returns (address tokenOut) {
+    function _decodeTokenOut(bytes memory path) internal pure returns (IERC20 tokenOut) {
         assembly {
             // Load the length of the path
             let pathLength := mload(path)

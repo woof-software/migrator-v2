@@ -10,8 +10,10 @@ contract TestMigratorV2 is MigratorV2 {
         address multisig,
         address[] memory adapters,
         address[] memory comets,
-        FlashData[] memory flashData
-    ) MigratorV2(multisig, adapters, comets, flashData) {
+        FlashData[] memory flashData,
+        address dai,
+        address usds
+    ) MigratorV2(multisig, adapters, comets, flashData, dai, usds) {
         IS_TEST_DEPLOYMENT = true;
     }
 }
