@@ -15,36 +15,44 @@ import {ConvertModule} from "../modules/ConvertModule.sol";
 
 /**
  * @title SparkUsdsAdapter
- * @notice Adapter contract for migrating user positions from Spark Protocol to Compound III (Comet), with USDS-specific logic.
+ * @notice Adapter contract for migrating user positions from Spark Protocol to Compound III (Comet), with support for USDS-based markets.
  *
- * @dev This adapter implements `IProtocolAdapter` and is intended for use via `delegatecall` from the `MigratorV2` contract.
- *      It is specifically designed to support migrations where the target Compound III market uses USDS as the base asset.
- *      The adapter builds upon `SwapModule` for Uniswap V3 token swaps and `ConvertModule` to handle stablecoin conversions between DAI and USDS.
+ * @dev This contract implements the `IProtocolAdapter` interface and integrates the `SwapModule` and `ConvertModule`
+ *      to facilitate seamless migration of debt and collateral positions. It supports token swaps via Uniswap V3
+ *      and stablecoin conversions (DAI ⇄ USDS) for USDS-based Compound III markets.
  *
- *      Key Capabilities:
- *      - Repayment of Spark variable debt using either pre-held tokens, swapped assets, or USDS → DAI conversions.
- *      - Withdrawal and migration of Spark collateral (spTokens) into the target Comet market, including:
- *          - Token swaps (via Uniswap V3),
- *          - DAI → USDS conversion (for USDS-based markets).
- *      - Flash loan repayment support for liquidity management during migrations, with fallback withdrawals from user balances in Comet.
- *      - Full or partial migrations, enforced via the `isFullMigration` deployment flag.
- *      - Reverts on incomplete debt repayment if full migration is required.
+ * Core Responsibilities:
+ * - Decodes user positions (borrows and collaterals) from encoded calldata.
+ * - Handles repayment of variable-rate debt positions in Spark Protocol.
+ * - Executes token swaps or stablecoin conversions as needed for repayment or migration.
+ * - Withdraws and optionally converts Spark collateral tokens before supplying them to Compound III.
+ * - Supports Uniswap-based flash loan repayments with fallback logic to pull funds from the user's Comet balance.
  *
- *      Architecture Notes:
- *      - All swap/conversion logic is encapsulated within inherited `SwapModule` and `ConvertModule`.
- *      - Migration data is passed as ABI-encoded structs representing the user’s debt and collateral positions.
- *      - Flash loan data is optional and handled separately for flexible integration.
- *      - Uses `DelegateReentrancyGuard` to prevent reentrant delegatecall execution.
+ * USDS-Specific Logic:
+ * - Converts DAI to USDS when migrating to USDS-based Comet markets.
+ * - Converts USDS to DAI when repaying flash loans borrowed in DAI for USDS Comet markets.
+ * - Automatically detects when stablecoin conversion is required based on swap paths and base tokens.
  *
- *      Requirements:
- *      - User must approve this contract to transfer spTokens and act on their behalf in Spark.
- *      - Uniswap router and DAI ⇄ USDS converter must be deployed and properly configured.
- *      - Comet market must support USDS directly or via proxy DAI.
+ * Key Components:
+ * - `executeMigration`: Entry point for coordinating the full migration flow.
+ * - `_repayBorrow`: Handles repayment of Spark debt, optionally performing swaps or conversions.
+ * - `_migrateCollateral`: Withdraws and optionally converts Spark collateral into Comet-compatible tokens.
+ * - `_repayFlashloan`: Repays flash loans using contract balance or by withdrawing from the user's Comet account.
+ * - `_isDebtCleared`: Verifies whether a specific Spark debt position has been fully repaid.
  *
- *      Limitations:
- *      - Only variable-rate debts (interestRateMode = 2) are supported.
- *      - No support for stable-rate debt.
- *      - Contract must be called via delegatecall and not directly.
+ * Constructor Configuration:
+ * - Accepts Uniswap router, stablecoin converter, token addresses, Spark contracts, and a full migration flag.
+ * - Stores all parameters as immutable for gas efficiency and safety.
+ *
+ * Requirements:
+ * - User must approve this contract to transfer relevant spTokens and debtTokens.
+ * - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`.
+ * - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`).
+ *
+ * Limitations:
+ * - Supports only variable-rate Spark debt (interestRateMode = 2).
+ * - Only DAI ⇄ USDS conversions are supported for USDS-based Comet markets.
+ * - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
  */
 contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
@@ -55,13 +63,18 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
 
     /**
      * @notice Struct for initializing deployment parameters of the adapter.
+     *
      * @param uniswapRouter Address of the Uniswap V3 SwapRouter contract.
-     * @param daiUsdsConverter Address of the DAI-USDS converter contract.
+     * @param daiUsdsConverter Address of the DAI ⇄ USDS converter contract.
      * @param dai Address of the DAI token.
      * @param usds Address of the USDS token.
-     * @param sparkLendingPool Address of the Spark Lending Pool.
-     * @param sparkDataProvider Address of the Spark Data Provider.
-     * @param isFullMigration Flag indicating whether the migration requires all debt to be cleared.
+     * @param sparkLendingPool Address of the Spark Lending Pool contract.
+     * @param sparkDataProvider Address of the Spark Data Provider contract.
+     * @param isFullMigration Boolean flag indicating whether the migration requires all debt to be cleared.
+     * @param useSwapRouter02 Boolean flag indicating whether to use Uniswap V3 SwapRouter02.
+     *
+     * @dev This struct encapsulates all the necessary parameters required to deploy the `SparkUsdsAdapter` contract.
+     *      It ensures that the adapter is properly configured with the required external contract addresses and settings.
      */
     struct DeploymentParams {
         address uniswapRouter;
@@ -75,9 +88,13 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     }
 
     /**
-     * @notice Struct representing full user position in Spark.
-     * @param borrows Borrow positions to be repaid.
-     * @param collateral Collateral positions to be withdrawn and migrated.
+     * @notice Struct representing a user's full position in Spark Protocol.
+     *
+     * @param borrows An array of `SparkBorrow` structs representing the user's borrow positions to be repaid.
+     * @param collateral An array of `SparkCollateral` structs representing the user's collateral positions to be migrated.
+     *
+     * @dev This struct encapsulates all the necessary information about a user's Spark position,
+     *      enabling seamless migration of both debt and collateral to Compound III (Comet).
      */
     struct SparkPosition {
         SparkBorrow[] borrows;
@@ -85,10 +102,17 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     }
 
     /**
-     * @notice Struct representing a single borrow to repay.
-     * @param debtToken Spark debt token address.
-     * @param amount Amount to repay (use type(uint256).max for full amount).
-     * @param swapParams Parameters to obtain repay token (e.g., USDS → DAI).
+     * @notice Struct representing a single borrow position to repay in Spark Protocol.
+     *
+     * @param debtToken The address of the Spark variable debt token to be repaid.
+     * @param amount The amount of debt to repay. Use `type(uint256).max` to repay the full debt balance.
+     * @param swapParams Parameters for obtaining the repayment token, including:
+     *        - `path`: The encoded swap path specifying the token swap sequence.
+     *        - `amountInMaximum`: The maximum amount of input tokens that can be spent during the swap.
+     *        - `deadline`: The timestamp by which the swap must be completed.
+     *
+     * @dev This struct is used to define the details of a borrow position, including the debt token,
+     *      the amount to repay, and optional swap parameters for acquiring the repayment token.
      */
     struct SparkBorrow {
         address debtToken;
@@ -97,10 +121,18 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     }
 
     /**
-     * @notice Struct representing a single collateral to migrate.
-     * @param spToken Spark spToken address.
-     * @param amount Amount to migrate (use type(uint256).max for full amount).
-     * @param swapParams Parameters to convert to Compound-compatible token.
+     * @notice Struct representing a single collateral position to migrate from Spark Protocol to Compound III (Comet).
+     *
+     * @param spToken The address of the Spark spToken representing the collateral.
+     * @param amount The amount of spToken to migrate. Use `type(uint256).max` to migrate the full balance.
+     * @param swapParams Parameters for converting the collateral into a Compound-compatible token, including:
+     *        - `path`: The encoded swap path specifying the token swap sequence.
+     *        - `amountOutMinimum`: The minimum amount of output tokens to be received.
+     *        - `deadline`: The timestamp by which the swap must be completed.
+     *
+     * @dev This struct is used to define the details of a collateral position, including the token to migrate,
+     *      the amount to migrate, and optional swap parameters for converting the collateral into a token
+     *      compatible with the target Compound III market.
      */
     struct SparkCollateral {
         address spToken;
@@ -110,38 +142,89 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
 
     /// --------Constants-------- ///
 
+    /**
+     * @notice The fixed length of the token conversion path used for DAI ⇄ USDS conversions.
+     *
+     * @dev This constant is used to validate the swap path length when performing stablecoin conversions
+     *      between DAI and USDS in USDS-based Compound III (Comet) markets. It ensures that the swap path
+     *      adheres to the expected format for conversions.
+     */
     uint8 private constant CONVERT_PATH_LENGTH = 40;
 
-    /// @notice Interest rate mode for variable-rate borrowings in Spark (2 represents variable rate)
+    /**
+     * @notice Interest rate mode for variable-rate borrowings in Spark Protocol.
+     *
+     * @dev This constant is set to `2`, which represents the variable interest rate mode in Spark.
+     *      It is used when repaying borrow positions in the Spark Lending Pool.
+     */
     uint256 public constant INTEREST_RATE_MODE = 2;
 
-    /// @notice Boolean indicating whether the migration is a full migration
+    /**
+     * @notice Boolean indicating whether the migration is a full migration.
+     *
+     * @dev This immutable variable determines if the migration process requires all debt positions
+     *      to be fully cleared. If set to `true`, the contract ensures that all outstanding debt
+     *      is repaid during the migration process. It is initialized during the deployment of the
+     *      `SparkUsdsAdapter` contract.
+     */
     bool public immutable IS_FULL_MIGRATION;
 
-    /// @notice Spark Lending Pool contract address
+    /**
+     * @notice Spark Lending Pool contract address.
+     *
+     * @dev This immutable variable holds the address of the Spark Lending Pool, which is used to perform
+     *      operations such as withdrawing collateral and repaying debt. It is initialized during the deployment
+     *      of the `SparkUsdsAdapter` contract.
+     */
     ISparkPool public immutable LENDING_POOL;
 
-    /// @notice Spark Data Provider contract address
+    /**
+     * @notice Spark Data Provider contract address.
+     *
+     * @dev This immutable variable holds the address of the Spark Data Provider, which is used to fetch
+     *      user reserve data, including debt and collateral information. It is initialized during the deployment
+     *      of the `SparkUsdsAdapter` contract.
+     */
     ISparkPoolDataProvider public immutable DATA_PROVIDER;
 
     /// --------Errors-------- ///
 
-    /// @dev Reverts if the debt for a specific token has not been successfully cleared
-    error DebtNotCleared(address spToken);
+    /**
+     * @dev Reverts if the debt for a specific token has not been successfully cleared.
+     * @param spToken The address of the Spark spToken associated with the uncleared debt.
+     *
+     * @notice This error is triggered during a full migration when the user's debt for a specific asset
+     *         in Spark has not been fully repaid after the repayment process.
+     */ error DebtNotCleared(address spToken);
 
     /// --------Constructor-------- ///
 
     /**
-     * @notice Initializes the SparkUsdsAdapter contract
-     * @param deploymentParams Deployment parameters for the SparkUsdsAdapter contract:
-     * - uniswapRouter Address of the Uniswap V3 SwapRouter contract
-     * - daiUsdsConverter Address of the DAI to USDS converter contract
-     * - dai Address of the DAI token
-     * - usds Address of the USDS token
-     * - sparkLendingPool Address of the Spark Lending Pool contract
-     * - sparkDataProvider Address of the Spark Data Provider contract
-     * - isFullMigration Boolean indicating whether the migration is full or partial
-     * @dev Reverts if any of the provided addresses are zero
+     * @notice Initializes the SparkUsdsAdapter contract with deployment parameters.
+     *
+     * @param deploymentParams Struct containing the following deployment parameters:
+     *        - `uniswapRouter`: Address of the Uniswap V3 SwapRouter contract.
+     *        - `daiUsdsConverter`: Address of the DAI ⇄ USDS converter contract (optional, can be zero address).
+     *        - `dai`: Address of the DAI token (optional, can be zero address).
+     *        - `usds`: Address of the USDS token (optional, can be zero address).
+     *        - `sparkLendingPool`: Address of the Spark Lending Pool contract.
+     *        - `sparkDataProvider`: Address of the Spark Data Provider contract.
+     *        - `isFullMigration`: Boolean flag indicating whether the migration requires all debt to be cleared.
+     *        - `useSwapRouter02`: Boolean flag indicating whether to use Uniswap V3 SwapRouter02.
+     *
+     * @dev The constructor initializes the `SwapModule` and `ConvertModule` with the provided Uniswap router
+     *      and stablecoin converter addresses. It also validates that the Spark Lending Pool and Data Provider
+     *      addresses are non-zero. All parameters are stored as immutable for gas efficiency and safety.
+     *
+     * Requirements:
+     * - `sparkLendingPool` and `sparkDataProvider` must not be zero addresses.
+     *
+     * Warning:
+     * - If `daiUsdsConverter`, `dai`, or `usds` are set to zero addresses, USDS-specific logic (e.g., DAI ⇄ USDS conversions)
+     *   will not be supported. In this case, only standard token swaps will be available for migration.
+     *
+     * Reverts:
+     * - {InvalidZeroAddress} if `sparkLendingPool` or `sparkDataProvider` is a zero address.
      */
     constructor(
         DeploymentParams memory deploymentParams
@@ -160,7 +243,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// --------Functions-------- ///
 
     /**
-     * @notice Executes the migration of a user's full or partial position from Spark to Compound III (Comet).
+     * @notice Executes the migration of a user's full or partial position from Spark Protocol to Compound III (Comet).
      *
      * @dev This function performs the following steps:
      *  1. Decodes the encoded `migrationData` into a `SparkPosition` struct that includes the user's
@@ -170,7 +253,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *  3. Iterates over each collateral item and calls `_migrateCollateral` to withdraw the user's assets
      *     from Spark and deposit them into Compound III. This step may involve:
      *     - Converting tokens (e.g., DAI → USDS),
-     *     - Performing Uniswap V3 swaps,
+     *     - Performing Uniswap V3 swaps.
      *  4. If `flashloanData` is provided, the function invokes `_repayFlashloan` to settle the flash loan debt.
      *     Repayment can happen from contract balance or by withdrawing the needed amount from the user’s
      *     balance in Compound III.
@@ -182,8 +265,19 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *        - An array of `SparkCollateral` items to migrate.
      * @param flashloanData ABI-encoded data used to repay a Uniswap V3 flash loan if one was taken.
      *        Pass an empty bytes value if no flash loan is used (e.g., for collateral-only migrations).
+     * @param preBaseAssetBalance The contract's base token balance before the migration process begins.
      *
-     * @dev This function is protected by a nonReentrant modifier to prevent reentrancy attacks.
+     * Requirements:
+     * - The user must approve this contract to transfer their `spTokens` and act on their behalf in Spark.
+     * - The `migrationData` must be correctly encoded and represent valid Spark positions.
+     * - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment.
+     *
+     * Warning:
+     * - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts.
+     *
+     * Reverts:
+     * - If any borrow repayment, collateral migration, or flash loan repayment fails.
+     * - If the migration process encounters invalid swap paths or insufficient allowances.
      */
     function executeMigration(
         address user,
@@ -215,20 +309,28 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @notice Repays a flash loan obtained from a Uniswap V3 liquidity pool.
      *
      * @dev This function ensures that the borrowed flash loan amount, including its associated fee,
-     * is fully repaid to the originating liquidity pool. If the contract's balance of the
-     * `flashBaseToken` is insufficient, it attempts to withdraw the shortfall from the user's
-     * Comet balance. If the flash loan was taken in DAI but the Comet market uses USDS as its base
-     * token, the contract first withdraws USDS and converts it to DAI before repayment.
+     *      is fully repaid to the originating liquidity pool. If the contract's balance of the
+     *      `flashBaseToken` is insufficient, it attempts to withdraw the shortfall from the user's
+     *      Compound III (Comet) account. If the flash loan was taken in DAI but the Comet market uses
+     *      USDS as its base token, the contract first withdraws USDS and converts it to DAI before repayment.
      *
-     * This repayment strategy supports both direct base token usage and proxy repayment using
-     * USDS-DAI conversion for USDS-based markets.
+     * Steps performed:
+     * 1. Decodes the `flashloanData` to extract the flash loan pool, token, and repayment amount.
+     * 2. Checks the contract's current balance of the flash loan token and calculates any shortfall.
+     * 3. If a shortfall exists:
+     *    - Calculates the amount to withdraw from the user's Comet account.
+     *    - Withdraws the required amount from the user's Comet account.
+     *    - Converts USDS to DAI if necessary for repayment.
+     * 4. Transfers the full repayment amount (including fees) back to the flash loan pool.
+     * 5. Supplies any residual base token balance back to the user's Comet account.
      *
      * @param user The address of the user whose Compound III (Comet) balance may be used to cover the shortfall.
      * @param comet The address of the Compound III (Comet) market associated with the user's position.
      * @param flashloanData ABI-encoded tuple containing:
      *        - `flashLiquidityPool` (address): The Uniswap V3 pool that provided the flash loan.
-     *        - `flashBaseToken` (address): The token borrowed via the flash loan.
+     *        - `flashBaseToken` (IERC20): The token borrowed via the flash loan.
      *        - `flashAmountWithFee` (uint256): The total amount to repay, including fees.
+     * @param preBaseAssetBalance The contract's base token balance before the flash loan was taken.
      *
      * Requirements:
      * - The contract must ensure full repayment of `flashAmountWithFee` in `flashBaseToken`.
@@ -284,6 +386,33 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         }
     }
 
+    /**
+     * @notice Calculates the amount of tokens to withdraw from the user's Compound III (Comet) account
+     *         to cover a flash loan repayment shortfall.
+     *
+     * @dev This function determines the optimal withdrawal amount based on the user's current Comet balances,
+     *      borrow limits, and the flash loan repayment requirements. It ensures that the user maintains the
+     *      minimum borrow balance (`baseBorrowMin`) required by Comet after the transaction.
+     *
+     * @param comet Address of the Compound III (Comet) contract.
+     * @param user Address of the user whose Comet account is being accessed.
+     * @param ownBaseTokenBalance Current balance of the base token held by the contract.
+     * @param repayFlashloanAmount Total amount required to repay the flash loan, including fees.
+     *
+     * @return withdrawAmount The amount of tokens to withdraw from the user's Comet account.
+     *
+     * Logic:
+     * - If the user's Comet base token balance is sufficient to cover the shortfall, withdraw only the shortfall amount.
+     * - If the user's projected borrow balance after the transaction meets or exceeds `baseBorrowMin`, withdraw the shortfall.
+     * - If the user's projected borrow balance is below `baseBorrowMin`, calculate the additional amount needed to meet the minimum.
+     * - If the user has no debt and the required amount is less than `baseBorrowMin`, withdraw the minimum borrow amount.
+     *
+     * Requirements:
+     * - The user must have sufficient base token balance or borrowing capacity in their Comet account.
+     *
+     * Reverts:
+     * - This function does not revert directly but relies on the caller to handle insufficient balances or borrowing capacity.
+     */
     function _calculateWithdrawAmount(
         address comet,
         address user,
@@ -318,57 +447,24 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         }
     }
 
-    function __calculateWithdrawAmount(
-        address comet,
-        address user,
-        uint256 ownBaseTokenBalance,
-        uint256 repayFlashloanAmount
-    ) internal view returns (uint256 withdrawAmount) {
-        uint256 userBalanceBaseToken = IComet(comet).balanceOf(user);
-        uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
-        uint256 currentBorrow = IComet(comet).borrowBalanceOf(user);
-
-        // Скільки бракує, щоб покрити флешлоун
-        uint256 shortfallAmount = repayFlashloanAmount > ownBaseTokenBalance
-            ? repayFlashloanAmount - ownBaseTokenBalance
-            : 0;
-
-        // Скільки потрібно взяти з комету (withdraw), якщо не вистачає в балансі
-        uint256 projectedBorrow = shortfallAmount > userBalanceBaseToken ? shortfallAmount - userBalanceBaseToken : 0;
-
-        uint256 totalBorrowAfter = currentBorrow + projectedBorrow;
-
-        if (shortfallAmount == 0) {
-            // Користувач має достатньо власного балансу
-            withdrawAmount = 0;
-        } else if (totalBorrowAfter >= baseBorrowMin) {
-            // Новий борг + існуючий >= мінімального боргу → нормально
-            withdrawAmount = shortfallAmount;
-        } else {
-            // Потрібно запозичити додатково, щоб досягти мінімального порогу
-            uint256 additionalBorrowNeeded = baseBorrowMin - totalBorrowAfter;
-            withdrawAmount = shortfallAmount + additionalBorrowNeeded;
-        }
-    }
-
     /**
-     * @notice Repays a borrow position held by the user on Spark protocol.
+     * @notice Repays a borrow position held by the user on the Spark protocol.
      *
-     * @dev This function repays a variable debt position from the user's Spark account.
-     * It supports flexible repayment strategies, including full or partial debt coverage.
-     * If repayment requires acquiring a specific token (debtToken), a swap or conversion
-     * is performed prior to repayment:
+     * @dev This function handles the repayment of a variable-rate debt position in Spark. It supports
+     * flexible repayment strategies, including full or partial repayment. If the repayment token
+     * (debtToken) is not already available, the function performs a swap or conversion to acquire it.
      *
-     * - If the user’s borrow specifies `amount == type(uint256).max`, the contract treats this
-     *   as a request to repay the entire outstanding debt.
-     * - If `swapParams.path` is provided, the contract either:
-     *     - Converts USDS to DAI directly using `_convertUsdsToDai()` (for Spark USDS-based markets), or
-     *     - Performs an exact-output swap on Uniswap V3 to acquire the required debt token.
-     * - After obtaining the repayment token, the contract increases allowance to the Spark
-     *   Lending Pool and calls `repay()` on behalf of the user.
+     * Repayment logic:
+     * - If `borrow.amount == type(uint256).max`, the function repays the full outstanding debt.
+     * - If `swapParams.path` is provided, the function:
+     *     - Converts USDS to DAI using `_convertUsdsToDai()` if required.
+     *     - Converts DAI to USDS using `_convertDaiToUsds()` if required.
+     *     - Executes an exact-output swap on Uniswap V3 to acquire the required debt token.
+     * - After acquiring the repayment token, the function approves the Spark Lending Pool to spend it
+     *   and calls `repay()` on behalf of the user.
      *
-     * Additionally, if the migration mode is full, it verifies whether the debt has been
-     * completely cleared using `_isDebtCleared()` and reverts with `DebtNotCleared()` if not.
+     * If the migration mode is full (`IS_FULL_MIGRATION`), the function verifies that the debt has been
+     * fully cleared using `_isDebtCleared()` and reverts with `DebtNotCleared()` if any residual debt remains.
      *
      * @param user The address of the user whose Spark borrow position is being repaid.
      * @param borrow Struct containing:
@@ -377,14 +473,18 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *        - `swapParams`: Parameters to define token swap logic (optional).
      *
      * Requirements:
-     * - If a swap is required, `swapParams.path` must be valid and match expected input/output tokens.
+     * - If a swap is required, `swapParams.path` must be valid and match the expected input/output tokens.
      * - The user must hold sufficient Spark debt and allow repayment on their behalf.
      * - If in full migration mode, the debt must be fully cleared after repayment.
      *
      * Effects:
      * - Performs token conversion or swap if necessary.
-     * - Transfers repayment tokens to the Spark pool.
+     * - Transfers repayment tokens to the Spark Lending Pool.
      * - Verifies debt clearance post-repayment if `IS_FULL_MIGRATION` is set.
+     *
+     * Reverts:
+     * - If the debt is not fully cleared during a full migration.
+     * - If token transfers, swaps, or approvals fail.
      */
     function _repayBorrow(address user, SparkBorrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
@@ -524,14 +624,14 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @notice Checks whether the user's debt position for a specific asset in Spark is fully repaid.
      *
      * @dev Queries the Spark Data Provider to retrieve the user's reserve data for the specified asset.
-     *      Extracts both stable and variable debt amounts and returns `true` only if their sum is zero.
-     *      This check is typically used during full migration to ensure no residual debt remains.
+     *      Extracts the current variable debt amount and returns `true` only if the debt is zero.
+     *      This method is typically used during full migrations to ensure no residual debt remains.
      *
      * @param user The address of the user whose debt status is being checked.
      * @param asset The address of the underlying asset in Spark (e.g., DAI, USDC, etc.).
      *
-     * @return isCleared A boolean value indicating whether the total debt (stable + variable)
-     *         for the specified asset is fully cleared. Returns `true` if repaid, `false` otherwise.
+     * @return isCleared A boolean value indicating whether the variable debt for the specified asset is fully cleared.
+     *         Returns `true` if the debt is zero, otherwise `false`.
      */
     function _isDebtCleared(address user, IERC20 asset) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset

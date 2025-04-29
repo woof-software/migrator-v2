@@ -7,9 +7,10 @@ import {IDaiUsds} from "../interfaces/IDaiUsds.sol";
 import {CommonErrors} from "../errors/CommonErrors.sol";
 
 /**
- * @title SwapModule
- * @notice Provides advanced swap functionality using Uniswap V3, with slippage checking and error handling.
- * @dev Designed as an abstract contract for adapters to inherit.
+ * @title ConvertModule
+ * @notice Provides functionality for converting between DAI and USDS using a DaiUsds converter contract.
+ * @dev This abstract contract is designed to be inherited by other contracts that require stablecoin conversion.
+ *      It ensures efficient and safe conversions by validating inputs and handling errors.
  */
 abstract contract ConvertModule is CommonErrors {
     /// -------- Libraries -------- ///
@@ -18,36 +19,69 @@ abstract contract ConvertModule is CommonErrors {
     /// --------Constants-------- ///
 
     /**
-     * @notice Converter contract for DAI to USDS.
+     * @notice The DaiUsds converter contract used for converting between DAI and USDS.
+     *
+     * @dev This contract facilitates the conversion of DAI to USDS and vice versa. It is initialized
+     *      during the deployment of the `ConvertModule` and is immutable for gas efficiency and safety.
      */
     IDaiUsds public immutable DAI_USDS_CONVERTER;
 
     /**
      * @notice Address of the DAI token.
-     */
-    IERC20 public immutable DAI;
+     *
+     * @dev This variable holds the address of the DAI token used for conversions in the `ConvertModule`.
+     *      It is initialized during the deployment of the `ConvertModule` and is immutable for gas efficiency and safety.
+     */ IERC20 public immutable DAI;
 
     /**
      * @notice Address of the USDS token.
-     */
-    IERC20 public immutable USDS;
+     *
+     * @dev This variable holds the address of the USDS token used for conversions in the `ConvertModule`.
+     *      It is initialized during the deployment of the `ConvertModule` and is immutable for gas efficiency and safety.
+     */ IERC20 public immutable USDS;
 
     /// --------Errors-------- ///
 
     /**
-     * @dev Reverts if the DAI to USDS conversion fails.
+     * @dev Reverts if the DAI to USDS or USDS to DAI conversion fails.
+     * @param expectedAmount The expected amount of tokens to be received after conversion.
+     * @param actualAmount The actual amount of tokens received after conversion.
+     *
+     * @notice This error is triggered when the amount of tokens received from the Dai ⇄ USDS conversion
+     *         does not match the expected amount, indicating a failure in the conversion process.
      */
     error ConversionFailed(uint256 expectedAmount, uint256 actualAmount);
 
+    /**
+     * @dev Reverts if the provided token addresses are identical.
+     * @param token Address of the token that caused the error.
+     *
+     * @notice This error is triggered when the DAI and USDS token addresses are the same,
+     *         which is invalid for the Dai ⇄ USDS conversion process.
+     */
     error IdenticalTokenAddresses(address token);
 
     /// --------Constructor-------- ///
 
     /**
-     * @notice Initializes the adapter with the DaiUsds converter, wrapped token, and token addresses.
+     * @notice Initializes the ConvertModule with the DaiUsds converter, DAI token, and USDS token addresses.
+     *
      * @param _daiUsdsConverter Address of the DaiUsds converter contract.
      * @param _dai Address of the DAI token.
      * @param _usds Address of the USDS token.
+     *
+     * @dev This constructor sets up the DaiUsds converter and token addresses. It validates the provided addresses
+     *      to ensure they are consistent and non-zero when a converter is specified. If no converter is provided
+     *      (`_daiUsdsConverter` is zero), the DAI and USDS addresses are set to zero as well.
+     *
+     * Requirements:
+     * - If `_daiUsdsConverter` is non-zero:
+     *   - `_dai` and `_usds` must not be zero addresses.
+     *   - `_dai` and `_usds` must not be identical.
+     *
+     * Reverts:
+     * - {InvalidZeroAddress} if `_dai` or `_usds` is zero when `_daiUsdsConverter` is non-zero.
+     * - {IdenticalTokenAddresses} if `_dai` and `_usds` are the same address.
      */
     constructor(address _daiUsdsConverter, address _dai, address _usds) {
         bool hasConverter = _daiUsdsConverter != address(0);
@@ -71,9 +105,24 @@ abstract contract ConvertModule is CommonErrors {
 
     /**
      * @notice Converts DAI to USDS using the DaiUsds converter contract.
-     * @param daiAmount Amount of DAI to be converted.
-     * @return usdsAmount Amount of USDS received after conversion.
-     * @dev Reverts with {ConversionFailed} if the amount of USDS received is not equal to the expected amount.
+     *
+     * @param daiAmount The amount of DAI to be converted.
+     * @return usdsAmount The amount of USDS received after conversion.
+     *
+     * @dev This function performs the following steps:
+     *      1. Approves the DaiUsds converter contract to spend the specified `daiAmount`.
+     *      2. Retrieves the current USDS balance of the contract before the conversion.
+     *      3. Calls the `daiToUsds` function on the DaiUsds converter contract to perform the conversion.
+     *      4. Retrieves the USDS balance of the contract after the conversion.
+     *      5. Calculates the amount of USDS received by subtracting the pre-conversion balance from the post-conversion balance.
+     *      6. Reverts with {ConversionFailed} if the amount of USDS received does not match the expected amount (`daiAmount`).
+     *
+     * Requirements:
+     * - The DaiUsds converter contract must be properly configured and operational.
+     * - The contract must have sufficient DAI balance to perform the conversion.
+     *
+     * Reverts:
+     * - {ConversionFailed} if the amount of USDS received is not equal to the expected amount.
      */
     function _convertDaiToUsds(uint256 daiAmount) internal returns (uint256 usdsAmount) {
         // Approve the DaiUsds converter to spend DAI
@@ -92,9 +141,24 @@ abstract contract ConvertModule is CommonErrors {
 
     /**
      * @notice Converts USDS to DAI using the DaiUsds converter contract.
-     * @param usdsAmount Amount of USDS to be converted.
-     * @return daiAmount Amount of DAI received after conversion.
-     * @dev Reverts with {ConversionFailed} if the amount of DAI received is not equal to the expected amount.
+     *
+     * @param usdsAmount The amount of USDS to be converted.
+     * @return daiAmount The amount of DAI received after conversion.
+     *
+     * @dev This function performs the following steps:
+     *      1. Approves the DaiUsds converter contract to spend the specified `usdsAmount`.
+     *      2. Retrieves the current DAI balance of the contract before the conversion.
+     *      3. Calls the `usdsToDai` function on the DaiUsds converter contract to perform the conversion.
+     *      4. Retrieves the DAI balance of the contract after the conversion.
+     *      5. Calculates the amount of DAI received by subtracting the pre-conversion balance from the post-conversion balance.
+     *      6. Reverts with {ConversionFailed} if the amount of DAI received does not match the expected amount (`usdsAmount`).
+     *
+     * Requirements:
+     * - The DaiUsds converter contract must be properly configured and operational.
+     * - The contract must have sufficient USDS balance to perform the conversion.
+     *
+     * Reverts:
+     * - {ConversionFailed} if the amount of DAI received is not equal to the expected amount.
      */
     function _convertUsdsToDai(uint256 usdsAmount) internal returns (uint256 daiAmount) {
         // Approve the DaiUsds converter to spend USDS
