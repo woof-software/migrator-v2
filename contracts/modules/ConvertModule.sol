@@ -39,6 +39,8 @@ abstract contract ConvertModule is CommonErrors {
      */
     error ConversionFailed(uint256 expectedAmount, uint256 actualAmount);
 
+    error IdenticalTokenAddresses(address token);
+
     /// --------Constructor-------- ///
 
     /**
@@ -48,13 +50,21 @@ abstract contract ConvertModule is CommonErrors {
      * @param _usds Address of the USDS token.
      */
     constructor(address _daiUsdsConverter, address _dai, address _usds) {
-        if (_daiUsdsConverter == address(0) || _dai == address(0) || _usds == address(0)) {
-            revert InvalidZeroAddress();
+        bool hasConverter = _daiUsdsConverter != address(0);
+
+        if (hasConverter) {
+            if (_dai == address(0) || _usds == address(0)) {
+                revert InvalidZeroAddress();
+            }
+
+            if (_dai == _usds) {
+                revert IdenticalTokenAddresses(_dai);
+            }
         }
 
         DAI_USDS_CONVERTER = IDaiUsds(_daiUsdsConverter);
-        DAI = IERC20(_dai);
-        USDS = IERC20(_usds);
+        DAI = IERC20(hasConverter ? _dai : address(0));
+        USDS = IERC20(hasConverter ? _usds : address(0));
     }
 
     /// --------Functions-------- ///

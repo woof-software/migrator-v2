@@ -15,7 +15,7 @@ import {
 
 import {
     MigratorV2,
-    SparkAdapter,
+    SparkUsdsAdapter,
     ERC20__factory,
     IComet__factory,
     ERC20,
@@ -183,12 +183,11 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             daiUsdsConverter: daiUsdsAddress,
             dai: tokenAddresses.DAI,
             usds: tokenAddresses.USDS,
-            // wrappedNativeToken: tokenAddresses.WETH,
             sparkLendingPool: sparkContractAddresses.pool,
             sparkDataProvider: sparkContractAddresses.protocolDataProvider,
             isFullMigration: true,
             useSwapRouter02: false
-        })) as SparkAdapter;
+        })) as SparkUsdsAdapter;
         await sparkAdapter.deployed();
 
         const adapters = [sparkAdapter.address];

@@ -17,7 +17,7 @@ import {
 
 import {
     MigratorV2,
-    MorphoAdapter,
+    MorphoUsdsAdapter,
     ERC20__factory,
     IComet__factory,
     ERC20,
@@ -170,11 +170,10 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             daiUsdsConverter: daiUsdsAddress,
             dai: tokenAddresses.DAI,
             usds: tokenAddresses.USDS,
-            // wrappedNativeToken: tokenAddresses.WETH,
             morphoLendingPool: morphoContractAddresses.pool,
             isFullMigration: true,
             useSwapRouter02: false
-        })) as MorphoAdapter;
+        })) as MorphoUsdsAdapter;
         await morphoAdapter.deployed();
 
         const UniswapV3PathFinder = await ethers.getContractFactory("UniswapV3PathFinder");

@@ -189,7 +189,6 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             daiUsdsConverter: daiUsdsAddress,
             dai: tokenAddresses.DAI,
             usds: tokenAddresses.USDS,
-            // wrappedNativeToken: tokenAddresses.WETH,
             aaveLendingPool: aaveContractAddresses.pool,
             aaveDataProvider: aaveContractAddresses.protocolDataProvider,
             isFullMigration: true,

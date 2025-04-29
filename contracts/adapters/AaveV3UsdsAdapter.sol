@@ -169,8 +169,6 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.aaveDataProvider == address(0))
             revert InvalidZeroAddress();
 
-        //@TODO: Maybe need to add a check for the DAI and USDS addresses to be different from the Aave pool and data provider
-
         LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
         DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
@@ -307,20 +305,31 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
         uint256 ownBaseTokenBalance,
         uint256 repayFlashloanAmount
     ) internal view returns (uint256 withdrawAmount) {
-        uint256 userBalanceBaseToken = IComet(comet).balanceOf(user);
+        uint256 userCometBaseTokenBalance = IComet(comet).balanceOf(user);
+        uint256 userCometBorrowBalance = IComet(comet).borrowBalanceOf(user);
         uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
+        uint256 borrowMinDelta = (userCometBorrowBalance < baseBorrowMin && userCometBorrowBalance != 0)
+            ? (baseBorrowMin - userCometBorrowBalance)
+            : baseBorrowMin;
+
         uint256 shortfallAmount = repayFlashloanAmount - ownBaseTokenBalance;
 
-        if (
-            (userBalanceBaseToken == 0 && baseBorrowMin <= shortfallAmount) ||
-            userBalanceBaseToken > shortfallAmount ||
-            ((shortfallAmount > userBalanceBaseToken ? (shortfallAmount - userBalanceBaseToken) : 0) > baseBorrowMin)
-        ) {
+        // Case: the user already has a debt that covers the shortfall, or borrow >= borrowMinDelta
+        uint256 projectedBorrow = shortfallAmount > userCometBaseTokenBalance
+            ? shortfallAmount - userCometBaseTokenBalance
+            : 0;
+
+        if (userCometBaseTokenBalance >= shortfallAmount || projectedBorrow >= borrowMinDelta) {
             withdrawAmount = shortfallAmount;
-        } else if (shortfallAmount > userBalanceBaseToken && baseBorrowMin > userBalanceBaseToken) {
-            withdrawAmount = (baseBorrowMin - userBalanceBaseToken) + shortfallAmount;
-        } else {
-            withdrawAmount = baseBorrowMin;
+        }
+        // If projectedBorrow < borrowMinDelta, but the user already has a debt < borrowMinDelta,
+        // then you need to borrow enough to have ≥ borrowMinDelta after the transaction
+        else if (userCometBaseTokenBalance > 0 && projectedBorrow < borrowMinDelta) {
+            withdrawAmount = shortfallAmount + (borrowMinDelta - projectedBorrow);
+        }
+        // If the user has no debt and needs less than borrowMinDelta, we take the minimum
+        else {
+            withdrawAmount = borrowMinDelta;
         }
     }
 

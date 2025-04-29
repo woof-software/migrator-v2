@@ -526,6 +526,14 @@ contract MigratorV2 is IUniswapV3FlashCallback, ReentrancyGuard, Pausable, Ownab
         return _flashData[comet];
     }
 
+    function getEncodedDaiToUsdsConversionPath() external view returns (bytes memory) {
+        return abi.encodePacked(DAI, USDS);
+    }
+
+    function getEncodedUsdsToDaiConversionPath() external view returns (bytes memory) {
+        return abi.encodePacked(USDS, DAI);
+    }
+
     /// --------Private Functions-------- ///
 
     /**

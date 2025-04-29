@@ -15,7 +15,7 @@ import {
     AddressZero
 } from "../../../helpers"; // Adjust the path as needed
 
-import { MigratorV2, MorphoAdapter, ERC20__factory, IComet__factory, ERC20 } from "../../../../typechain-types";
+import { MigratorV2, MorphoUsdsAdapter, ERC20__factory, IComet__factory, ERC20 } from "../../../../typechain-types";
 
 import { MorphoPool__factory } from "../../types/contracts";
 
@@ -58,7 +58,7 @@ const POSITION_ABI = [
 
 const SLIPPAGE_BUFFER_PERCENT = 115; // 15% slippage buffer
 
-describe("MigratorV2 and MorphoAdapter contracts", function () {
+describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
     async function setupEnv() {
         const [owner, user] = await ethers.getSigners();
         console.log("Network:", process.env.npm_config_fork_network || "not set");
@@ -133,17 +133,19 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             )
         );
 
-        const MorphoAdapterFactory = await ethers.getContractFactory("MorphoAdapter", owner);
-        const morphoAdapter = (await MorphoAdapterFactory.connect(owner).deploy({
+        const MorphoUsdsAdapterFactory = await ethers.getContractFactory("MorphoUsdsAdapter", owner);
+        const MorphoUsdsAdapter = (await MorphoUsdsAdapterFactory.connect(owner).deploy({
             uniswapRouter: uniswapContractAddresses.router,
-            // wrappedNativeToken: tokenAddresses.WETH,
+            daiUsdsConverter: AddressZero,
+            dai: AddressZero,
+            usds: AddressZero,
             morphoLendingPool: morphoContractAddresses.pool,
             isFullMigration: true,
             useSwapRouter02: true
-        })) as MorphoAdapter;
-        await morphoAdapter.deployed();
+        })) as MorphoUsdsAdapter;
+        await MorphoUsdsAdapter.deployed();
 
-        const adapters = [morphoAdapter.address];
+        const adapters = [MorphoUsdsAdapter.address];
         const comets = [compoundContractAddresses.markets.cUSDCv3];
 
         // Set up flashData for migrator
@@ -183,7 +185,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             morphoContractAddresses,
             uniswapContractAddresses,
             compoundContractAddresses,
-            morphoAdapter,
+            MorphoUsdsAdapter,
             migratorV2,
             morphoPool,
             cUSDCv3Contract,
@@ -200,7 +202,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -396,14 +398,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {
@@ -449,7 +451,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -586,14 +588,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {
@@ -639,7 +641,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -801,14 +803,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {
@@ -848,7 +850,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -969,14 +971,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralMorpho: {
@@ -1010,7 +1012,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -1133,14 +1135,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralMorpho: {
@@ -1174,7 +1176,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -1303,14 +1305,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralMorpho: {
@@ -1344,7 +1346,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -1471,14 +1473,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralMorpho: {
@@ -1512,7 +1514,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -1651,14 +1653,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {
@@ -1696,7 +1698,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -1801,14 +1803,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {
@@ -1842,7 +1844,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -1938,14 +1940,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {
@@ -1974,7 +1976,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 tokenContracts,
                 tokenDecimals,
                 compoundContractAddresses,
-                morphoAdapter,
+                MorphoUsdsAdapter,
                 migratorV2,
                 morphoPool,
                 cUSDCv3Contract,
@@ -2091,14 +2093,14 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        morphoAdapter.address,
+                        MorphoUsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(morphoAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(MorphoUsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsMorpho: {

@@ -71,7 +71,7 @@ const POSITION_ABI = [
 
 const SLIPPAGE_BUFFER_PERCENT = 115; // 15% slippage buffer
 
-describe("MigratorV2 and AaveV3Adapter contracts", function () {
+describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
     async function setupEnv() {
         const [owner, user] = await ethers.getSigners();
         console.log("Network:", process.env.npm_config_fork_network || "not set");
@@ -161,18 +161,20 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             ])
         );
 
-        const AaveV3AdapterFactory = await ethers.getContractFactory("AaveV3Adapter", owner);
-        const aaveV3Adapter = (await AaveV3AdapterFactory.connect(owner).deploy({
+        const AaveV3UsdsAdapterFactory = await ethers.getContractFactory("AaveV3UsdsAdapter", owner);
+        const AaveV3UsdsAdapter = (await AaveV3UsdsAdapterFactory.connect(owner).deploy({
             uniswapRouter: uniswapContractAddresses.router,
-            // wrappedNativeToken: tokenAddresses.WETH,
+            daiUsdsConverter: AddressZero,
+            dai: AddressZero,
+            usds: AddressZero,
             aaveLendingPool: aaveContractAddresses.pool,
             aaveDataProvider: aaveContractAddresses.protocolDataProvider,
             isFullMigration: true,
             useSwapRouter02: false
         })) as AaveV3UsdsAdapter;
-        await aaveV3Adapter.deployed();
+        await AaveV3UsdsAdapter.deployed();
 
-        const adapters = [aaveV3Adapter.address];
+        const adapters = [AaveV3UsdsAdapter.address];
         const comets = [compoundContractAddresses.markets.cUSDCv3, compoundContractAddresses.markets.cWETHv3]; // Compound USDC (cUSDCv3) market
 
         // Set up flashData for migrator
@@ -225,7 +227,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
             debtTokenContracts,
             uniswapContractAddresses,
             compoundContractAddresses,
-            aaveV3Adapter,
+            AaveV3UsdsAdapter,
             migratorV2,
             aaveV3Pool,
             wrappedTokenGateway,
@@ -246,7 +248,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 wrappedTokenGateway,
@@ -436,14 +438,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsAave: {
@@ -490,7 +492,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -615,14 +617,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsAave: {
@@ -668,7 +670,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 wrappedTokenGateway,
@@ -834,14 +836,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralsAave: {
@@ -882,7 +884,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -994,14 +996,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
@@ -1038,7 +1040,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -1154,14 +1156,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
@@ -1198,7 +1200,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -1325,14 +1327,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
@@ -1371,7 +1373,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -1491,14 +1493,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
@@ -1535,7 +1537,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -1651,14 +1653,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
@@ -1695,7 +1697,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aTokenContracts,
                 debtTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -1826,14 +1828,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
 
             const userBalancesAfter = {
                 collateralAave: {
@@ -1869,7 +1871,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aaveContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -1970,14 +1972,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
                 collateralsAave: {
@@ -2010,7 +2012,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aaveContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -2119,14 +2121,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
                 collateralsAave: {
@@ -2159,7 +2161,7 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 aaveContractAddresses,
                 aTokenContracts,
                 compoundContractAddresses,
-                aaveV3Adapter,
+                AaveV3UsdsAdapter,
                 migratorV2,
                 aaveV3Pool,
                 cUSDCv3Contract
@@ -2270,14 +2272,14 @@ describe("MigratorV2 and AaveV3Adapter contracts", function () {
                 migratorV2
                     .connect(user)
                     .migrate(
-                        aaveV3Adapter.address,
+                        AaveV3UsdsAdapter.address,
                         compoundContractAddresses.markets.cUSDCv3,
                         migrationData,
                         flashAmount
                     )
             )
                 .to.emit(migratorV2, "MigrationExecuted")
-                .withArgs(aaveV3Adapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
+                .withArgs(AaveV3UsdsAdapter.address, user.address, cUSDCv3Contract.address, Zero, Zero);
 
             const userBalancesAfter = {
                 collateralsAave: {
