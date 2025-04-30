@@ -5,7 +5,7 @@ pragma solidity 0.8.28;
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IComet} from "../interfaces/IComet.sol";
-import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {ISwapRouter} from "../interfaces/uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
 import {IMorpho, MarketParams, Id, Market, Position} from "../interfaces/morpho/IMorpho.sol";
@@ -44,13 +44,19 @@ import {SharesMathLib} from "../libs/morpho/SharesMathLib.sol";
  *
  * Requirements:
  * - User must approve this contract to transfer relevant collateral and debt positions.
+ * - The user must grant permission to the Migrator contract to interact with their tokens in the target Compound III market:
+ *   `IComet.allow(migratorV2.address, true)`.
  * - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`.
  * - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`).
+ * - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment.
  *
  * Limitations:
  * - Supports only variable-rate Morpho debt.
  * - Only DAI ⇄ USDS conversions are supported for USDS-based Comet markets.
  * - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
+ *
+ * Warning:
+ * - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts.
  */
 contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
@@ -498,7 +504,7 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         recipient: address(this),
                         amountOut: borrow.assetsAmount,
                         amountInMaximum: borrow.swapParams.amountInMaximum,
-                        deadline: block.timestamp
+                        deadline: borrow.swapParams.deadline
                     })
                 );
             }

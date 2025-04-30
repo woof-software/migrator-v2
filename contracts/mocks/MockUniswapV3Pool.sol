@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IUniswapV3FlashCallback} from "../interfaces/@uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
+import {IUniswapV3FlashCallback} from "../interfaces/uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NegativeTesting} from "./NegativeTesting.sol";
 

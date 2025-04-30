@@ -39,7 +39,10 @@ Requirements:
 Limitations:
 - Supports only variable-rate Aave debt (interestRateMode = 2).
 - Only DAI ⇄ USDS conversions are supported for USDS-based Comet markets.
-- Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`._
+- Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
+
+Warning:
+- This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts._
 
 ### DeploymentParams
 
@@ -246,7 +249,7 @@ _This function performs the following steps:
 | comet | address | The address of the target Compound III (Comet) contract to receive the migrated assets. |
 | migrationData | bytes | ABI-encoded AaveV3Position struct that contains:        - An array of AaveV3Borrow items representing debts to repay.        - An array of AaveV3Collateral items representing collaterals to migrate. |
 | flashloanData | bytes | ABI-encoded data used to repay a Uniswap V3 flash loan if one was taken.        Should be empty if no flash loan is used (e.g., in debt-free collateral migration). |
-| preBaseAssetBalance | uint256 | The contract's base token balance before the migration process begins. Requirements: - The user must have approved this contract to transfer their aTokens and debtTokens. - The `migrationData` must be correctly encoded and represent valid Aave V3 positions. - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment. Warning: - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts. Reverts: - If any borrow repayment, collateral migration, or flash loan repayment fails. - If the migration process encounters invalid swap paths or insufficient allowances. |
+| preBaseAssetBalance | uint256 | The contract's base token balance before the migration process begins. Requirements: - User must approve this contract to transfer relevant aTokens and debtTokens. - The user must grant permission to the Migrator contract to interact with their tokens in the target Compound III market:   `IComet.allow(migratorV2.address, true)`. - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`. - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`). - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment. Warning: - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts. Reverts: - If any borrow repayment, collateral migration, or flash loan repayment fails. - If the migration process encounters invalid swap paths or insufficient allowances. |
 
 ### _repayFlashloan
 

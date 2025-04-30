@@ -9,7 +9,7 @@ import {ISparkPoolDataProvider} from "../interfaces/spark/ISparkPoolDataProvider
 import {IDebtToken} from "../interfaces/spark/IDebtToken.sol";
 import {ISpToken} from "../interfaces/spark/ISpToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
-import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {ISwapRouter} from "../interfaces/uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
 
@@ -46,13 +46,20 @@ import {ConvertModule} from "../modules/ConvertModule.sol";
  *
  * Requirements:
  * - User must approve this contract to transfer relevant spTokens and debtTokens.
+ * - The user must grant permission to the Migrator contract to interact with their tokens in the target Compound III market:
+ *   `IComet.allow(migratorV2.address, true)`.
  * - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`.
  * - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`).
+ * - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment.
+
  *
  * Limitations:
  * - Supports only variable-rate Spark debt (interestRateMode = 2).
  * - Only DAI ⇄ USDS conversions are supported for USDS-based Comet markets.
  * - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
+ *
+ * Warning:
+ * - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts.
  */
 contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
@@ -519,7 +526,7 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         recipient: address(this),
                         amountOut: repayAmount,
                         amountInMaximum: borrow.swapParams.amountInMaximum,
-                        deadline: block.timestamp
+                        deadline: borrow.swapParams.deadline
                     })
                 );
             }

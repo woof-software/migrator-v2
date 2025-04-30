@@ -29,7 +29,10 @@ Security:
 Limitations:
 - Assumes adapter logic is secure and performs proper token accounting.
 - Assumes flash loan repayment tokens are supported by Uniswap V3 and Comet.
-- Relies on external modules (`SwapModule`, `ConvertModule`) for swaps and conversions._
+- Relies on external modules (`SwapModule`, `ConvertModule`) for swaps and conversions.
+
+Warning:
+- This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts._
 
 ### FlashData
 
@@ -70,24 +73,6 @@ address USDS
 Address of the USDS token.
 
 _Used for stablecoin conversions in USDS-based Comet markets._
-
-### allowedAdapters
-
-```solidity
-mapping(address => bool) allowedAdapters
-```
-
-Tracks the registration status of protocol adapters.
-
-_This mapping associates each adapter address with a boolean value indicating whether the adapter is allowed.
-     Adapters must implement the `IProtocolAdapter` interface and are executed via `delegatecall`.
-
- adapter - The address of the protocol adapter.
- status - A boolean value where `true` indicates the adapter is allowed, and `false` indicates it is not.
-
-Usage:
-- Adapters must be explicitly registered by the contract owner using the `setAdapter` function.
-- Only allowed adapters can be used for migrations via the `migrate` function._
 
 ### InvalidMigrationData
 
@@ -239,9 +224,8 @@ event AdapterAllowed(address adapter)
 
 Emitted when a protocol adapter is successfully registered.
 
-_This event is emitted whenever a new adapter is added to the `allowedAdapters` mapping
-     and the `_adapters` enumerable set. It indicates that the adapter is now authorized
-     to handle migrations via the `migrate` function._
+_This event is emitted whenever a new adapter is added to the `_adapters` enumerable set.
+     It indicates that the adapter is now authorized to handle migrations via the `migrate` function._
 
 #### Parameters
 
@@ -257,9 +241,8 @@ event AdapterRemoved(address adapter)
 
 Emitted when a protocol adapter is removed from the list of allowed adapters.
 
-_This event is emitted whenever an adapter is removed from the `allowedAdapters` mapping
-     and the `_adapters` enumerable set. It indicates that the adapter is no longer authorized
-     to handle migrations via the `migrate` function._
+_This event is emitted whenever an adapter is removed from the `_adapters` enumerable set.
+     It indicates that the adapter is no longer authorized to handle migrations via the `migrate` function._
 
 #### Parameters
 
@@ -312,11 +295,17 @@ modifier validAdapter(address adapter)
 
 Ensures that the provided adapter address is valid and registered.
 
-_This modifier checks the `allowedAdapters` mapping to confirm that the adapter is registered
-     and allowed to handle migrations. If the adapter is not registered, the transaction reverts.
+_This modifier checks if the specified adapter is included in the `_adapters` enumerable set.
+     If the adapter is not registered, the transaction will revert with an {InvalidAdapter} error.
+
+Requirements:
+- The `adapter` address must be registered in the `_adapters` enumerable set.
 
 Reverts:
-- {InvalidAdapter} if the adapter is not currently allowed._
+- {InvalidAdapter} if the adapter is not currently registered.
+
+Usage:
+- Apply this modifier to functions that require a valid and registered adapter to execute._
 
 #### Parameters
 
@@ -404,7 +393,7 @@ _This function performs the following:
 | adapter | address | The address of the protocol adapter responsible for handling migration logic. |
 | comet | address | The address of the target Compound III (Comet) market. |
 | migrationData | bytes | ABI-encoded input containing migration strategy and user-specific data. |
-| flashAmount | uint256 | The amount of tokens to borrow via Uniswap V3 flash loan. Use zero if no borrowing is needed. Requirements: - `adapter` must be registered in `allowedAdapters`. - `comet` must have associated flash loan configuration (`_flashData[comet]`). - `migrationData` must not be empty. Effects: - Stores a callback hash to validate flash loan integrity. - Either initiates a flash loan or directly calls the adapter logic depending on `flashAmount`. - Emits {MigrationExecuted} upon successful completion. Warning: - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts. Reverts: - {InvalidMigrationData} if `migrationData.length == 0`. - {InvalidAdapter} if the adapter is not registered. - {CometIsNotSupported} if flash data for `comet` is missing. - {DelegatecallFailed} if adapter delegatecall fails and returns an error payload. |
+| flashAmount | uint256 | The amount of tokens to borrow via Uniswap V3 flash loan. Use zero if no borrowing is needed. Requirements: - `adapter` must be registered in `_adapters` enumerable set. - `comet` must have associated flash loan configuration (`_flashData[comet]`). - `migrationData` must not be empty. - User must approve this contract to transfer relevant collateral and debt positions. - The user must grant permission to the Migrator contract to interact with their tokens in the target Compound III market:   `IComet.allow(migratorV2.address, true)`. - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`. - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`). - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment. Effects: - Stores a callback hash to validate flash loan integrity. - Either initiates a flash loan or directly calls the adapter logic depending on `flashAmount`. - Emits {MigrationExecuted} upon successful completion. Warning: - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts. Reverts: - {InvalidMigrationData} if `migrationData.length == 0`. - {InvalidAdapter} if the adapter is not registered. - {CometIsNotSupported} if flash data for `comet` is missing. - {DelegatecallFailed} if adapter delegatecall fails and returns an error payload. |
 
 ### uniswapV3FlashCallback
 
@@ -440,14 +429,14 @@ function setAdapter(address adapter) external
 
 Registers a new protocol adapter.
 
-_This function adds the specified adapter to the `allowedAdapters` mapping and the `_adapters` enumerable set.
+_This function adds the specified adapter to the `_adapters` enumerable set.
      Once registered, the adapter can be used for migrations via the `migrate` function._
 
 #### Parameters
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| adapter | address | The address of the protocol adapter to register. Requirements: - The caller must be the contract owner. - The `adapter` address must not be zero. - The `adapter` must not already be registered in `allowedAdapters`. Effects: - Marks the adapter as allowed in the `allowedAdapters` mapping. - Adds the adapter to the `_adapters` enumerable set. - Emits an {AdapterAllowed} event upon successful registration. Reverts: - {InvalidZeroAddress} if the `adapter` address is zero. - {AdapterAlreadyAllowed} if the `adapter` is already registered. |
+| adapter | address | The address of the protocol adapter to register. Requirements: - The caller must be the contract owner. - The `adapter` address must not be zero. - The `adapter` must not already be registered in `_adapters` enumerable set. Effects: - Adds the adapter to the `_adapters` enumerable set. - Emits an {AdapterAllowed} event upon successful registration. Reverts: - {InvalidZeroAddress} if the `adapter` address is zero. - {AdapterAlreadyAllowed} if the `adapter` is already registered. |
 
 ### removeAdapter
 
@@ -457,14 +446,14 @@ function removeAdapter(address adapter) external
 
 Removes an existing protocol adapter from the list of allowed adapters.
 
-_This function disables the specified adapter by marking it as disallowed in the `allowedAdapters` mapping
-     and removes it from the `_adapters` enumerable set. Once removed, the adapter can no longer be used for migrations._
+_This function removes the specified adapter from the `_adapters` enumerable set.
+     Once removed, the adapter can no longer be used for migrations._
 
 #### Parameters
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| adapter | address | The address of the protocol adapter to remove. Requirements: - The caller must be the contract owner. - The contract must be in a paused state. - The `adapter` must currently be registered in `allowedAdapters`. Effects: - Marks the adapter as disallowed in the `allowedAdapters` mapping. - Removes the adapter from the `_adapters` enumerable set. - Emits an {AdapterRemoved} event upon successful removal. Reverts: - {InvalidAdapter} if the adapter is not currently allowed. |
+| adapter | address | The address of the protocol adapter to remove. Requirements: - The caller must be the contract owner. - The contract must be in a paused state. - The `adapter` must currently be registered in `_adapters`. Effects: - Removes the adapter from the `_adapters` enumerable set. - Emits an {AdapterRemoved} event upon successful removal. Reverts: - {InvalidAdapter} if the adapter is not currently allowed. |
 
 ### setFlashData
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ISwapRouter02} from "../interfaces/@uniswap/v3-periphery/ISwapRouter02.sol";
+import {ISwapRouter02} from "../interfaces/uniswap/v3-periphery/ISwapRouter02.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NegativeTesting} from "./NegativeTesting.sol";
 

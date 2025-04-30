@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IUniswapV3FlashCallback} from "../interfaces/@uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
+import {IUniswapV3FlashCallback} from "../interfaces/uniswap/v3-core/callback/IUniswapV3FlashCallback.sol";
 
 interface IFakeUniswapV3Pool {
     function flash(address recipient, uint256 amount0, uint256 amount1, bytes calldata data) external;
