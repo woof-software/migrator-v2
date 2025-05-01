@@ -228,6 +228,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
 
     context("Migrate positions from AaveV3 to Compound III", function () {
         it("Scn.#1: migration of all collaterals | three collateral (incl. Native Token) and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has three collateral tokens (ETH, WBTC, and USDT, including the native token ETH) and three borrow tokens (USDC, DAI, and LINK).
+            // The migration involves swaps for both collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that all borrow positions are fully repaid, all collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -472,6 +477,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#2: partial collateral migration (by asset types)| three collateral and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
+            // This test scenario verifies the partial migration of collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has three collateral tokens (WETH, WBTC, and USDT) and three borrow tokens (USDC, DAI, and LINK).
+            // The migration involves swaps for specific collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that only selected collateral and borrow positions are migrated, while others remain unchanged,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -650,6 +660,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#3: migration of all collaterals | two collateral and two borrow tokens (incl. native token) | only swaps (coll. & borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has two collateral tokens (WBTC and USDT) and two borrow tokens (DAI and ETH, including the native token ETH).
+            // The migration involves swaps for both collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that all borrow positions are fully repaid, all collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -861,6 +876,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#4: migration of all collaterals | one collateral and one borrow tokens | without swaps", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet) without swaps.
+            // The user has one collateral token (WBTC) and one borrow token (USDC).
+            // The migration directly transfers the collateral and borrow positions to the target market without any swaps or conversions.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as WBTC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1015,6 +1035,12 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#5: migration of all collaterals | one collateral and one borrow tokens | only swaps (borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has one collateral token (WBTC) and one borrow token (DAI).
+            // The migration involves a swap for the borrow position, converting it into USDC in the target market,
+            // while the collateral position is directly transferred without swaps.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as WBTC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1173,6 +1199,12 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#6: migration of all collaterals | one collateral and two borrow tokens | only swaps (borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has one collateral token (WBTC) and two borrow tokens (DAI and USDC).
+            // The migration involves swaps for the borrow positions, converting them into USDC in the target market,
+            // while the collateral position is directly transferred without swaps.
+            // The test ensures that all borrow positions are fully repaid, the collateral is migrated to Comet as WBTC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1344,6 +1376,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#7: migration of all collaterals | one collateral and one borrow tokens | only swaps (coll. & barrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has one collateral token (WBTC) and one borrow token (DAI).
+            // The migration involves swaps for both the collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1506,6 +1543,12 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#8: migration of all collaterals | one collateral and one borrow tokens | only swaps (collateral pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has one collateral token (WBTC) and one borrow token (USDC).
+            // The migration involves a swap for the collateral position, converting it into USDC in the target market,
+            // while the borrow position is directly transferred without swaps.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1664,6 +1707,12 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#9: migration of all collaterals | tow collateral and one borrow tokens | only swaps (collateral pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Aave V3 to Compound III (Comet).
+            // The user has two collateral tokens (WBTC and USDT) and one borrow token (USDC).
+            // The migration involves swaps for the collateral positions, converting them into USDC in the target market,
+            // while the borrow position is directly transferred without swaps.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1837,6 +1886,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#10: migration of all collaterals | two collateral without borrow tokens | without swaps", async function () {
+            // This test scenario verifies the migration of all collateral positions from Aave V3 to Compound III (Comet) without swaps.
+            // The user has two collateral tokens (WBTC and USDC) and no borrow tokens.
+            // The migration directly transfers the collateral positions to the target market without any swaps or conversions.
+            // The test ensures that all collateral is fully migrated to Comet as WBTC and USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1976,6 +2030,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#11: migration of all collaterals | two collateral without borrow tokens | only swaps (single-hop route)", async function () {
+            // This test scenario verifies the migration of all collateral positions from Aave V3 to Compound III (Comet) using single-hop swaps.
+            // The user has two collateral tokens (WBTC and USDT) and no borrow tokens.
+            // The migration involves single-hop swaps for the collateral positions, converting them into USDC in the target market.
+            // The test ensures that all collateral is fully migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -2123,6 +2182,11 @@ describe("MigratorV2 and AaveV3UsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#12: migration of all collaterals | two collateral without borrow tokens | only swaps (multi-hop route)", async function () {
+            // This test scenario verifies the migration of all collateral positions from Aave V3 to Compound III (Comet) using multi-hop swaps.
+            // The user has two collateral tokens (WBTC and DAI) and no borrow tokens.
+            // The migration involves multi-hop swaps for the collateral positions, converting them into USDC in the target market.
+            // The test ensures that all collateral is fully migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,

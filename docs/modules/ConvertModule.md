@@ -75,6 +75,26 @@ _Reverts if the provided token addresses are identical._
 | ---- | ---- | ----------- |
 | token | address | Address of the token that caused the error. |
 
+### ConverterConfigMismatch
+
+```solidity
+error ConverterConfigMismatch(address converter, address dai, address usds)
+```
+
+This error is triggered when the provided DaiUsds converter, DAI, and USDS addresses
+        do not match the expected configuration. This ensures that the converter and token
+        addresses are consistent and valid for the conversion process.
+
+_Reverts if the configuration of the DaiUsds converter, DAI token, or USDS token is inconsistent._
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| converter | address | The address of the DaiUsds converter contract. |
+| dai | address | The address of the DAI token. |
+| usds | address | The address of the USDS token. |
+
 ### constructor
 
 ```solidity
@@ -93,16 +113,16 @@ Requirements:
   - `_dai` and `_usds` must not be identical.
 
 Reverts:
-- {InvalidZeroAddress} if `_dai` or `_usds` is zero when `_daiUsdsConverter` is non-zero.
+- {ConverterConfigMismatch} if the provided DaiUsds converter, DAI, and USDS addresses are inconsistent.
 - {IdenticalTokenAddresses} if `_dai` and `_usds` are the same address._
 
 #### Parameters
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| _daiUsdsConverter | address | Address of the DaiUsds converter contract. |
-| _dai | address | Address of the DAI token. |
-| _usds | address | Address of the USDS token. |
+| _daiUsdsConverter | address | The address of the DaiUsds converter contract. |
+| _dai | address | The address of the DAI token. |
+| _usds | address | The address of the USDS token. |
 
 ### _convertDaiToUsds
 

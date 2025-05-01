@@ -83,7 +83,8 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             GNO: "0x6810e776880C02933D47DB1b9fc05908e5386b96",
             wstETH: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
             cbBTC: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
-            sDAI: "0x83F20F44975D03b1b09e64809B757c47f942BEeA"
+            sDAI: "0x83F20F44975D03b1b09e64809B757c47f942BEeA",
+            LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA"
         };
 
         const treasuryAddresses: Record<string, string> = {
@@ -96,7 +97,8 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             GNO: "0x70e278941eD3C0D2c6D6105df184831992ACA856",
             wstETH: "0xacB7027f271B03B502D65fEBa617a0d817D62b8e",
             cbBTC: "0x698C1f4c8db11629fDC913F54A6dC44a9166F187",
-            sDAI: "0x15a8B2ceA2D8f48c150f2EC7be07808c54355Bc7"
+            sDAI: "0x15a8B2ceA2D8f48c150f2EC7be07808c54355Bc7",
+            LINK: "0xF977814e90dA44bFA03b6295A0616a897441aceC"
         };
 
         const sparkContractAddresses = {
@@ -2569,6 +2571,271 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             expect(userBalancesAfter.collateralsAave.DAI).to.be.equal(Zero);
             // collaterals from Aave should be migrated to Comet as USDS
             expect(userBalancesAfter.collateralsComet.USDS).to.be.above(userBalancesBefore.collateralsComet.USDS);
+        }).timeout(0);
+
+        it("Scn.#14: migration of all collaterals | three collateral (incl. Native Token) and three borrow tokens | only swaps (coll. & borrow pos.) | already has a loan with Comet", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Spark (AaveV3) to Compound III (Comet)
+            // when the user has three collateral tokens (ETH, cbBTC, and USDT, including the native token ETH) and three borrow tokens (USDC, DAI, and wstETH).
+            // Additionally, the user already has an existing loan with Comet before the migration.
+            // The migration involves swaps for both collateral and borrow positions to convert them into USDC.
+            // The test ensures that all borrow positions are closed, all collateral is successfully migrated to Comet as USDC,
+            // and the user's balances are updated accordingly, while maintaining the existing loan with Comet.
+            const {
+                user,
+                treasuryAddresses,
+                tokenAddresses,
+                tokenContracts,
+                tokenDecimals,
+                sparkContractAddresses,
+                spTokenContracts,
+                debtTokenContracts,
+                compoundContractAddresses,
+                sparkAdapter,
+                migratorV2,
+                sparkPool,
+                cUSDCv3Contract
+            } = await loadFixture(setupEnv);
+
+            // simulation of the vault contract work
+            const fundingData = {
+                cbBTC: parseUnits("0.03", tokenDecimals.cbBTC), // ~ 2950 USD
+                USDT: parseUnits("300", tokenDecimals.USDT),
+                LINK: parseUnits("90", tokenDecimals.LINK) // ~1665 USD  << for supply to Comet before migration
+            };
+            // --- start
+            for (const [token, amount] of Object.entries(fundingData)) {
+                const tokenContract = tokenContracts[token];
+                const treasuryAddress = treasuryAddresses[token];
+                expect(await tokenContract.balanceOf(treasuryAddress)).to.be.above(amount);
+
+                await setBalance(treasuryAddress, parseEther("1000"));
+                await impersonateAccount(treasuryAddress);
+                const treasurySigner = await ethers.getSigner(treasuryAddress);
+
+                await tokenContract.connect(treasurySigner).transfer(user.address, amount);
+                await stopImpersonatingAccount(treasuryAddress);
+            }
+            // --- end
+
+            // Supply LINK to Comet
+            await tokenContracts.LINK.connect(user).approve(cUSDCv3Contract.address, fundingData.LINK);
+            await cUSDCv3Contract.connect(user).supply(tokenAddresses.LINK, fundingData.LINK);
+            expect(await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.LINK)).to.be.equal(
+                fundingData.LINK
+            );
+            // // Get borrow of USDC from Comet
+            const borrowAmount = parseUnits("500", tokenDecimals.USDC);
+            await cUSDCv3Contract.connect(user).withdraw(tokenAddresses.USDC, borrowAmount);
+
+            // setup the collateral and borrow positions in AaveV3
+
+            const interestRateMode = 2; // variable
+            const referralCode = 0;
+
+            // total supply amount equivalent to 3380 USD
+            const supplyAmounts = {
+                ETH: parseEther("0.05"), // 130 USD
+                cbBTC: fundingData.cbBTC, // 2950 USD
+                USDT: fundingData.USDT // 300 USD
+            };
+
+            for (const [token, amount] of Object.entries(supplyAmounts)) {
+                if (token === "ETH") {
+                    // supply ETH as collateral
+                    const wrappedTokenGateway = WETHGateway__factory.connect(
+                        sparkContractAddresses.wrappedTokenGateway,
+                        user
+                    );
+                    await wrappedTokenGateway.depositETH(sparkPool.address, user.address, referralCode, {
+                        value: supplyAmounts.ETH
+                    });
+                } else {
+                    await tokenContracts[token].approve(sparkPool.address, amount);
+                    await sparkPool.supply(tokenAddresses[token], amount, user.address, referralCode);
+                }
+            }
+
+            // total borrow amount equivalent to 1420 USD
+            const borrowAmounts = {
+                USDC: parseUnits("100", tokenDecimals.USDC), // ~100 USD
+                DAI: parseUnits("700", tokenDecimals.DAI), // ~700 USD
+                wstETH: parseUnits("0.2", tokenDecimals.wstETH) // ~620 USD
+            };
+
+            for (const [token, amount] of Object.entries(borrowAmounts)) {
+                await sparkPool.borrow(tokenAddresses[token], amount, interestRateMode, referralCode, user.address);
+            }
+
+            // Approve migration
+            for (const [symbol] of Object.entries(supplyAmounts)) {
+                if (symbol === "ETH") {
+                    spTokenContracts["WETH"].approve(migratorV2.address, MaxUint256);
+                } else {
+                    await spTokenContracts[symbol].approve(migratorV2.address, MaxUint256);
+                }
+            }
+
+            // set allowance for migrator to spend cUSDCv3
+            await cUSDCv3Contract.allow(migratorV2.address, true);
+            expect(await cUSDCv3Contract.isAllowed(user.address, migratorV2.address)).to.be.true;
+
+            const userBalancesBefore = {
+                collateralsAave: {
+                    ETH: await spTokenContracts.WETH.balanceOf(user.address),
+                    cbBTC: await spTokenContracts.cbBTC.balanceOf(user.address),
+                    USDT: await spTokenContracts.USDT.balanceOf(user.address)
+                },
+                borrowAave: {
+                    USDC: await debtTokenContracts.USDC.balanceOf(user.address),
+                    DAI: await debtTokenContracts.DAI.balanceOf(user.address),
+                    wstETH: await debtTokenContracts.wstETH.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC),
+                    WETH: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
+                }
+            };
+
+            logger("userBalancesBefore:", userBalancesBefore);
+
+            const deadline = await ethers.provider.getBlock("latest").then((block) => block.timestamp + 1000);
+            const position = {
+                borrows: [
+                    {
+                        debtToken: sparkContractAddresses.variableDebtToken.USDC,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: "0x",
+                            deadline,
+                            amountInMaximum: 1n
+                        }
+                    },
+                    {
+                        debtToken: sparkContractAddresses.variableDebtToken.DAI,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: ethers.utils.concat([
+                                ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
+                                FEE_100,
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
+                            ]),
+                            deadline,
+                            amountInMaximum: parseUnits("700", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    },
+                    {
+                        debtToken: sparkContractAddresses.variableDebtToken.wstETH,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: ethers.utils.concat([
+                                ethers.utils.hexZeroPad(tokenAddresses.wstETH, 20),
+                                FEE_100,
+                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                                FEE_500,
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
+                            ]),
+                            deadline,
+                            amountInMaximum: parseUnits("620", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100)
+                        }
+                    }
+                ],
+                collaterals: [
+                    {
+                        spToken: sparkContractAddresses.spToken.WETH,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: ethers.utils.concat([
+                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                                FEE_500,
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
+                            ]),
+                            deadline,
+                            amountOutMinimum: 1n
+                        }
+                    },
+                    {
+                        spToken: sparkContractAddresses.spToken.cbBTC,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: ethers.utils.concat([
+                                ethers.utils.hexZeroPad(tokenAddresses.cbBTC, 20),
+                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
+                            ]),
+                            deadline,
+                            amountOutMinimum: 1n
+                        }
+                    },
+                    {
+                        spToken: sparkContractAddresses.spToken.USDT,
+                        amount: MaxUint256,
+                        swapParams: {
+                            path: ethers.utils.concat([
+                                ethers.utils.hexZeroPad(tokenAddresses.USDT, 20),
+                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
+                            ]),
+                            deadline,
+                            amountOutMinimum: 1n
+                        }
+                    }
+                ]
+            };
+
+            // Encode the data
+            const migrationData = ethers.utils.defaultAbiCoder.encode(
+                ["tuple(" + POSITION_ABI.join(",") + ")"],
+                [[position.borrows, position.collaterals]]
+            );
+
+            const flashAmount = parseUnits("1420", tokenDecimals.USDC).mul(SLIPPAGE_BUFFER_PERCENT).div(100);
+
+            await expect(
+                migratorV2
+                    .connect(user)
+                    .migrate(
+                        sparkAdapter.address,
+                        compoundContractAddresses.markets.cUSDCv3,
+                        migrationData,
+                        flashAmount
+                    )
+            )
+                .to.emit(migratorV2, "MigrationExecuted")
+                .withArgs(sparkAdapter.address, user.address, cUSDCv3Contract.address, flashAmount, anyValue);
+
+            const userBalancesAfter = {
+                collateralsAave: {
+                    ETH: await spTokenContracts.WETH.balanceOf(user.address),
+                    cbBTC: await spTokenContracts.cbBTC.balanceOf(user.address),
+                    USDT: await spTokenContracts.USDT.balanceOf(user.address)
+                },
+                borrowAave: {
+                    USDC: await debtTokenContracts.USDC.balanceOf(user.address),
+                    DAI: await debtTokenContracts.DAI.balanceOf(user.address),
+                    wstETH: await debtTokenContracts.wstETH.balanceOf(user.address)
+                },
+                collateralsComet: {
+                    USDC: await cUSDCv3Contract.balanceOf(user.address),
+                    cbBTC: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.cbBTC),
+                    WETH: await cUSDCv3Contract.collateralBalanceOf(user.address, tokenAddresses.WETH)
+                }
+            };
+
+            logger("userBalancesAfter:", userBalancesAfter);
+
+            // all borrows should be closed
+            expect(userBalancesAfter.borrowAave.DAI).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave.USDC).to.be.equal(Zero);
+            expect(userBalancesAfter.borrowAave.wstETH).to.be.equal(Zero);
+            //all collaterals should be migrated
+            expect(userBalancesAfter.collateralsAave.cbBTC).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.USDT).to.be.equal(Zero);
+            expect(userBalancesAfter.collateralsAave.ETH).to.be.equal(Zero);
+            // all collaterals from Aave should be migrated to Comet as USDC
+            expect(userBalancesAfter.collateralsComet.cbBTC).to.be.equal(userBalancesBefore.collateralsComet.cbBTC);
+            expect(userBalancesAfter.collateralsComet.WETH).to.be.equal(userBalancesBefore.collateralsComet.WETH);
+            expect(userBalancesAfter.collateralsComet.USDC).to.be.above(userBalancesBefore.collateralsComet.USDC);
         }).timeout(0);
     });
 });

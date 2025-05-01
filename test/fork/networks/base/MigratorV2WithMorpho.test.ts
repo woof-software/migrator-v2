@@ -195,6 +195,11 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
 
     context("Migrate positions from Morpho to Compound III", function () {
         it("Scn.#1: migration of all collaterals | three collateral and three borrow tokens | only swaps (coll. & borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has three collateral tokens (cbBTC, cbETH, and wstETH) and three borrow tokens (WETH, USDC, and EURC).
+            // The migration involves swaps for both collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that all borrow positions are fully repaid, all collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -444,6 +449,12 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#2: partial collateral migration (by asset types)| three collateral and three borrow tokens | only swaps (borrow pos.)", async function () {
+            // This test scenario verifies the partial migration of collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has three collateral tokens (cbBTC, cbETH, and wstETH) and three borrow tokens (WETH, USDC, and EURC).
+            // The migration involves swaps for the borrow positions, converting them into USDC in the target market,
+            // while only a subset of the collateral positions is migrated.
+            // The test ensures that the specified borrow positions are fully repaid, the selected collateral is migrated to Comet,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -634,6 +645,11 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#3: migration of all collaterals | two collateral and two borrow tokens | only swaps (coll. & borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has two collateral tokens (cbETH and wstETH) and two borrow tokens (USDC and EURC).
+            // The migration involves swaps for both collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that all borrow positions are fully repaid, all collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -843,6 +859,11 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#4: migration of all collaterals | one collateral and one borrow tokens | without swaps", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet) without swaps.
+            // The user has one collateral token (cbETH) and one borrow token (USDC).
+            // The migration directly transfers the collateral and borrow positions to the target market without any swaps or conversions.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as cbETH,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1005,6 +1026,12 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#5: migration of all collaterals | one collateral and one borrow tokens | only swaps (borrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has one collateral token (cbBTC) and one borrow token (WETH).
+            // The migration involves a swap for the borrow position, converting it into USDC in the target market,
+            // while the collateral is directly transferred without swaps.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as cbBTC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1169,6 +1196,11 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#6: migration of all collaterals | one collateral and one borrow tokens | only swaps (coll. & barrow pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has one collateral token (wstETH) and one borrow token (EURC).
+            // The migration involves swaps for both the collateral and borrow positions, converting them into USDC in the target market.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1339,6 +1371,12 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#7: migration of all collaterals | one collateral and one borrow tokens | only swaps (collateral pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has one collateral token (cbETH) and one borrow token (USDC).
+            // The migration involves a swap for the collateral position, converting it into USDC in the target market,
+            // while the borrow position is directly transferred without swaps.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1507,6 +1545,12 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#8: migration of all collaterals | tow collateral and one borrow tokens | only swaps (collateral pos.)", async function () {
+            // This test scenario verifies the migration of all collateral and borrow positions from Morpho to Compound III (Comet).
+            // The user has two collateral tokens (cbBTC and cbETH) and one borrow token (USDC).
+            // The migration involves swaps for the collateral positions, converting them into USDC in the target market,
+            // while the borrow position is directly transferred without swaps.
+            // The test ensures that the borrow position is fully repaid, the collateral is migrated to Comet as USDC,
+            // and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1691,6 +1735,10 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#9: migration of all collaterals | two collateral without borrow tokens | without swaps", async function () {
+            // This test scenario verifies the migration of all collateral positions from Morpho to Compound III (Comet) without swaps.
+            // The user has two collateral tokens (cbBTC and wstETH) and no borrow tokens.
+            // The migration directly transfers the collateral positions to the target market without any swaps or conversions.
+            // The test ensures that all collateral is migrated to Comet as cbBTC and wstETH, and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1837,6 +1885,10 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#10: migration of all collaterals | one collateral without borrow tokens | only swaps (single-hop route)", async function () {
+            // This test scenario verifies the migration of a single collateral position from Morpho to Compound III (Comet) using a single-hop swap route.
+            // The user has one collateral token (cbBTC) and no borrow tokens.
+            // The migration involves converting the collateral position into USDC in the target market using a single-hop swap.
+            // The test ensures that the collateral is fully migrated to Comet as USDC, and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,
@@ -1969,6 +2021,10 @@ describe("MigratorV2 and MorphoUsdsAdapter contracts", function () {
         }).timeout(0);
 
         it("Scn.#11: migration of all collaterals | two collateral without borrow tokens | only swaps (multi-hop route)", async function () {
+            // This test scenario verifies the migration of two collateral positions from Morpho to Compound III (Comet) using multi-hop swap routes.
+            // The user has two collateral tokens (cbETH and wstETH) and no borrow tokens.
+            // The migration involves converting the collateral positions into USDC in the target market using multi-hop swaps.
+            // The test ensures that all collateral is fully migrated to Comet as USDC, and the user's balances are updated accordingly.
             const {
                 user,
                 treasuryAddresses,

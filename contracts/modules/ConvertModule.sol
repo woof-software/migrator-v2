@@ -61,14 +61,27 @@ abstract contract ConvertModule is CommonErrors {
      */
     error IdenticalTokenAddresses(address token);
 
+    /**
+     * @dev Reverts if the configuration of the DaiUsds converter, DAI token, or USDS token is inconsistent.
+     *
+     * @param converter The address of the DaiUsds converter contract.
+     * @param dai The address of the DAI token.
+     * @param usds The address of the USDS token.
+     *
+     * @notice This error is triggered when the provided DaiUsds converter, DAI, and USDS addresses
+     *         do not match the expected configuration. This ensures that the converter and token
+     *         addresses are consistent and valid for the conversion process.
+     */
+    error ConverterConfigMismatch(address converter, address dai, address usds);
+
     /// --------Constructor-------- ///
 
     /**
      * @notice Initializes the ConvertModule with the DaiUsds converter, DAI token, and USDS token addresses.
      *
-     * @param _daiUsdsConverter Address of the DaiUsds converter contract.
-     * @param _dai Address of the DAI token.
-     * @param _usds Address of the USDS token.
+     * @param _daiUsdsConverter The address of the DaiUsds converter contract.
+     * @param _dai The address of the DAI token.
+     * @param _usds The address of the USDS token.
      *
      * @dev This constructor sets up the DaiUsds converter and token addresses. It validates the provided addresses
      *      to ensure they are consistent and non-zero when a converter is specified. If no converter is provided
@@ -80,25 +93,24 @@ abstract contract ConvertModule is CommonErrors {
      *   - `_dai` and `_usds` must not be identical.
      *
      * Reverts:
-     * - {InvalidZeroAddress} if `_dai` or `_usds` is zero when `_daiUsdsConverter` is non-zero.
+     * - {ConverterConfigMismatch} if the provided DaiUsds converter, DAI, and USDS addresses are inconsistent.
      * - {IdenticalTokenAddresses} if `_dai` and `_usds` are the same address.
      */
     constructor(address _daiUsdsConverter, address _dai, address _usds) {
-        bool hasConverter = _daiUsdsConverter != address(0);
+        bool isConsistent = (_daiUsdsConverter == address(0) && _dai == address(0) && _usds == address(0)) ||
+            (_daiUsdsConverter != address(0) && _dai != address(0) && _usds != address(0));
 
-        if (hasConverter) {
-            if (_dai == address(0) || _usds == address(0)) {
-                revert InvalidZeroAddress();
-            }
+        if (!isConsistent) {
+            revert ConverterConfigMismatch(_daiUsdsConverter, _dai, _usds);
+        }
 
-            if (_dai == _usds) {
-                revert IdenticalTokenAddresses(_dai);
-            }
+        if (_daiUsdsConverter != address(0) && _dai == _usds) {
+            revert IdenticalTokenAddresses(_dai);
         }
 
         DAI_USDS_CONVERTER = IDaiUsds(_daiUsdsConverter);
-        DAI = IERC20(hasConverter ? _dai : address(0));
-        USDS = IERC20(hasConverter ? _usds : address(0));
+        DAI = IERC20(_dai);
+        USDS = IERC20(_usds);
     }
 
     /// --------Functions-------- ///
