@@ -13,6 +13,7 @@ interface IProtocolAdapter {
         address user,
         address comet,
         bytes calldata migrationData,
-        bytes calldata flashloanData
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
     ) external;
 }

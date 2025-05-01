@@ -16,5 +16,5 @@ interface IDebtToken is IERC20 {
      * @notice Returns the address of the underlying asset of this debtToken (E.g. WETH for debtWETH)
      * @return The address of the underlying asset
      */
-    function UNDERLYING_ASSET_ADDRESS() external view returns (address);
+    function UNDERLYING_ASSET_ADDRESS() external view returns (IERC20);
 }

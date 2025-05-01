@@ -6,69 +6,58 @@ import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 import {IProtocolAdapter} from "../interfaces/IProtocolAdapter.sol";
 import {IAavePool} from "../interfaces/aave/IAavePool.sol";
 import {IAavePoolDataProvider} from "../interfaces/aave/IAavePoolDataProvider.sol";
-import {IWrappedTokenGatewayV3} from "../interfaces/aave/IWrappedTokenGatewayV3.sol";
 import {IDebtToken} from "../interfaces/aave/IDebtToken.sol";
 import {IAToken} from "../interfaces/aave/IAToken.sol";
 import {IComet} from "../interfaces/IComet.sol";
-import {ISwapRouter} from "../interfaces/@uniswap/v3-periphery/ISwapRouter.sol";
+import {ISwapRouter} from "../interfaces/uniswap/v3-periphery/ISwapRouter.sol";
 import {SwapModule} from "../modules/SwapModule.sol";
-import {IWETH9} from "../interfaces/IWETH9.sol";
 import {ConvertModule} from "../modules/ConvertModule.sol";
-import {DelegateReentrancyGuard} from "../utils/DelegateReentrancyGuard.sol";
 
 /**
  * @title AaveV3UsdsAdapter
- * @notice Adapter contract for migrating user positions from Aave V3 into Compound III (Comet),
- *         with native support for USDS markets and stablecoin conversion.
+ * @notice Adapter contract for migrating user positions from Aave V3 to Compound III (Comet), with support for USDS-based markets.
  *
- * @dev This contract implements the `IProtocolAdapter` interface and is designed to be used via
- *      delegatecall from the `MigratorV2` contract. It facilitates the seamless transfer of debt
- *      and collateral positions from Aave V3 to Compound III, with extended functionality to
- *      support USDS-based markets through the `ConvertModule`.
+ * @dev This contract implements the `IProtocolAdapter` interface and integrates the `SwapModule` and `ConvertModule`
+ *      to facilitate seamless migration of debt and collateral positions. It supports token swaps via Uniswap V3
+ *      and stablecoin conversions (DAI ⇄ USDS) for USDS-based Compound III markets.
  *
- *      Core Responsibilities:
- *      - Decodes the user’s position (borrows and collaterals) from encoded calldata.
- *      - Handles repayment of variable-rate debt positions in Aave V3.
- *      - Executes token swaps (via Uniswap V3) or stablecoin conversions (DAI ⇄ USDS) as needed.
- *      - Withdraws and optionally converts Aave V3 collateral tokens before supplying them to Comet.
- *      - Automatically wraps native tokens (ETH → WETH) when required.
- *      - Supports Uniswap-based flash loan repayments, with fallback logic to pull funds from the user’s Comet balance.
+ * Core Responsibilities:
+ * - Decodes user positions (borrows and collaterals) from encoded calldata.
+ * - Handles repayment of variable-rate debt positions in Aave V3.
+ * - Executes token swaps or stablecoin conversions as needed for repayment or migration.
+ * - Withdraws and optionally converts Aave collateral tokens before supplying them to Compound III.
+ * - Supports Uniswap-based flash loan repayments with fallback logic to pull funds from the user's Comet balance.
  *
- *      USDS-Specific Logic:
- *      - Converts DAI to USDS when migrating to USDS-based Comet markets.
- *      - Converts USDS to DAI when repaying flash loans borrowed in DAI for USDS Comet markets.
- *      - Automatically detects when stablecoin conversion is required based on swap paths and base tokens.
+ * USDS-Specific Logic:
+ * - Converts DAI to USDS when migrating to USDS-based Comet markets.
+ * - Converts USDS to DAI when repaying flash loans borrowed in DAI for USDS Comet markets.
+ * - Automatically detects when stablecoin conversion is required based on swap paths and base tokens.
  *
- *      Key Components:
- *      - `executeMigration`: Entry point called via delegatecall from `MigratorV2`. Coordinates full migration flow.
- *      - `_repayBorrow`: Repays Aave V3 debt, optionally converting tokens or swapping to the debt token.
- *      - `_migrateCollateral`: Withdraws and optionally converts Aave collateral into Comet-compatible tokens.
- *      - `_repayFlashloan`: Repays flash loans using the contract’s balance or by pulling from the user’s Comet account.
- *      - `_isDebtCleared`: Checks whether a specific Aave debt position has been fully repaid (for full migrations).
+ * Key Components:
+ * - `executeMigration`: Entry point for coordinating the full migration flow.
+ * - `_repayBorrow`: Handles repayment of Aave V3 debt, optionally performing swaps or conversions.
+ * - `_migrateCollateral`: Withdraws and optionally converts Aave collateral into Comet-compatible tokens.
+ * - `_repayFlashloan`: Repays flash loans using contract balance or by withdrawing from the user's Comet account.
+ * - `_isDebtCleared`: Verifies whether a specific Aave V3 debt position has been fully repaid.
  *
- *      Swap & Conversion Support:
- *      - Integrates `SwapModule` for Uniswap V3 exact input/output swaps.
- *      - Integrates `ConvertModule` for DAI ⇄ USDS conversions.
- *      - Automatically chooses between swap and conversion logic based on token path and base token.
+ * Constructor Configuration:
+ * - Accepts Uniswap router, stablecoin converter, token addresses, Aave contracts, and a full migration flag.
+ * - Stores all parameters as immutable for gas efficiency and safety.
  *
- *      Constructor Configuration:
- *      - Accepts Uniswap router, stablecoin converter, token addresses, Aave contracts, and a full migration flag.
- *      - Stores all parameters as immutable for gas efficiency and safety.
+ * Requirements:
+ * - User must approve this contract to transfer relevant aTokens and debtTokens.
+ * - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`.
+ * - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`).
  *
- *      Reentrancy:
- *      - All external entry points are guarded by `DelegateReentrancyGuard` to ensure secure delegatecall execution.
+ * Limitations:
+ * - Supports only variable-rate Aave debt (interestRateMode = 2).
+ * - Only DAI ⇄ USDS conversions are supported for USDS-based Comet markets.
+ * - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
  *
- *      Requirements:
- *      - User must have approved this contract to move relevant aTokens and debtTokens.
- *      - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`.
- *      - Swap parameters must be accurate and safe (especially for `amountInMaximum` and `amountOutMinimum`).
- *
- *      Limitations:
- *      - Supports only variable-rate Aave debt (interestRateMode = 2).
- *      - Only DAI ⇄ USDS conversions are supported (for USDS-based Comet markets).
- *      - Relies on external swap/conversion modules and Comet's support for `withdrawFrom` and `supplyTo`.
+ * Warning:
+ * - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts.
  */
-contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, DelegateReentrancyGuard {
+contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
     /// -------- Libraries -------- ///
 
     using SafeERC20 for IERC20;
@@ -77,30 +66,38 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
 
     /**
      * @notice Struct for initializing deployment parameters of the adapter.
+     *
      * @param uniswapRouter Address of the Uniswap V3 SwapRouter contract.
-     * @param daiUsdsConverter Address of the DAI-USDS converter contract.
+     * @param daiUsdsConverter Address of the DAI ⇄ USDS converter contract.
      * @param dai Address of the DAI token.
      * @param usds Address of the USDS token.
-     * @param wrappedNativeToken Address of the wrapped native token (e.g., WETH).
-     * @param aaveLendingPool Address of the Aave V3 Lending Pool.
-     * @param aaveDataProvider Address of the Aave V3 Data Provider.
-     * @param isFullMigration Flag indicating whether the migration requires all debt to be cleared.
+     * @param aaveLendingPool Address of the Aave V3 Lending Pool contract.
+     * @param aaveDataProvider Address of the Aave V3 Data Provider contract.
+     * @param isFullMigration Boolean flag indicating whether the migration requires all debt to be cleared.
+     * @param useSwapRouter02 Boolean flag indicating whether to use Uniswap V3 SwapRouter02.
+     *
+     * @dev This struct encapsulates all the necessary parameters required to deploy the `AaveV3UsdsAdapter` contract.
+     *      It ensures that the adapter is properly configured with the required external contract addresses and settings.
      */
     struct DeploymentParams {
         address uniswapRouter;
         address daiUsdsConverter;
         address dai;
         address usds;
-        address wrappedNativeToken;
         address aaveLendingPool;
         address aaveDataProvider;
         bool isFullMigration;
+        bool useSwapRouter02;
     }
 
     /**
-     * @notice Struct representing full user position in Aave V3.
-     * @param borrows Borrow positions to be repaid.
-     * @param collaterals Collateral positions to be withdrawn and migrated.
+     * @notice Struct representing a user's full position in Aave V3, including borrow and collateral details.
+     *
+     * @param borrows An array of `AaveV3Borrow` structs representing the user's borrow positions to be repaid.
+     * @param collaterals An array of `AaveV3Collateral` structs representing the user's collateral positions to be migrated.
+     *
+     * @dev This struct is used to encapsulate all the necessary information about a user's Aave V3 position,
+     *      enabling seamless migration of both debt and collateral to Compound III (Comet).
      */
     struct AaveV3Position {
         AaveV3Borrow[] borrows;
@@ -108,10 +105,17 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
     }
 
     /**
-     * @notice Struct representing a single borrow to repay.
-     * @param debtToken Aave V3 debt token address.
-     * @param amount Amount to repay (use type(uint256).max for full amount).
-     * @param swapParams Parameters to obtain repay token (DAI/USDS).
+     * @notice Struct representing a single borrow position to repay in Aave V3.
+     *
+     * @param debtToken The address of the Aave V3 variable debt token to be repaid.
+     * @param amount The amount of debt to repay. Use `type(uint256).max` to repay the full debt balance.
+     * @param swapParams Parameters for obtaining the repayment token, including:
+     *        - `path`: The encoded swap path specifying the token swap sequence.
+     *        - `amountInMaximum`: The maximum amount of input tokens that can be spent during the swap.
+     *        - `deadline`: The timestamp by which the swap must be completed.
+     *
+     * @dev This struct is used to define the details of a borrow position, including the debt token,
+     *      the amount to repay, and optional swap parameters for acquiring the repayment token.
      */
     struct AaveV3Borrow {
         address debtToken;
@@ -120,10 +124,18 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
     }
 
     /**
-     * @notice Struct representing a single collateral to migrate.
-     * @param aToken Aave aToken address.
-     * @param amount Amount to migrate (use type(uint256).max for full amount).
-     * @param swapParams Parameters to convert to Compound-compatible token.
+     * @notice Struct representing a single collateral position to migrate from Aave V3 to Compound III (Comet).
+     *
+     * @param aToken The address of the Aave aToken representing the collateral.
+     * @param amount The amount of aToken to migrate. Use `type(uint256).max` to migrate the full balance.
+     * @param swapParams Parameters for converting the collateral into a Compound-compatible token, including:
+     *        - `path`: The encoded swap path specifying the token swap sequence.
+     *        - `amountOutMinimum`: The minimum amount of output tokens to be received.
+     *        - `deadline`: The timestamp by which the swap must be completed.
+     *
+     * @dev This struct is used to define the details of a collateral position, including the token to migrate,
+     *      the amount to migrate, and optional swap parameters for converting the collateral into a token
+     *      compatible with the target Compound III market.
      */
     struct AaveV3Collateral {
         address aToken;
@@ -133,59 +145,99 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
 
     /// --------Constants-------- ///
 
-    /// @notice Address of the native token (e.g., ETH)
-    address public constant NATIVE_TOKEN = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    /**
+     * @notice The fixed length of the token conversion path used for DAI ⇄ USDS conversions.
+     * @dev This constant is used to validate the swap path length when performing stablecoin conversions
+     *      between DAI and USDS in USDS-based Compound III (Comet) markets.
+     */
+    uint8 private constant CONVERT_PATH_LENGTH = 40;
 
-    /// @notice Address of the wrapped native token (e.g., WETH).
-    IWETH9 public immutable WRAPPED_NATIVE_TOKEN;
-
-    /// @notice Interest rate mode for variable-rate borrowings in Aave V3 (2 represents variable rate)
+    /**
+     * @notice Interest rate mode for variable-rate borrowings in Aave V3.
+     *
+     * @dev This constant is set to `2`, which represents the variable interest rate mode in Aave V3.
+     *      It is used when repaying borrow positions in the Aave V3 Lending Pool.
+     */
     uint256 public constant INTEREST_RATE_MODE = 2;
 
-    /// @notice Boolean indicating whether the migration is a full migration
-    bool public immutable IS_FULL_MIGRATION;
+    /**
+     * @notice Boolean indicating whether the migration is a full migration.
+     *
+     * @dev This immutable variable determines if the migration process requires all debt positions
+     *      to be fully cleared. If set to `true`, the contract ensures that all outstanding debt
+     *      is repaid during the migration process. It is initialized during the deployment of the
+     *      `AaveV3UsdsAdapter` contract.
+     */ bool public immutable IS_FULL_MIGRATION;
 
-    /// @notice Aave V3 Lending Pool contract address
+    /**
+     * @notice Aave V3 Lending Pool contract address.
+     *
+     * @dev This immutable variable holds the address of the Aave V3 Lending Pool, which is used to perform
+     *      operations such as withdrawing collateral and repaying debt. It is initialized during the deployment
+     *      of the `AaveV3UsdsAdapter` contract.
+     */
     IAavePool public immutable LENDING_POOL;
 
-    /// @notice Aave V3 Data Provider contract address
+    /**
+     * @notice Aave V3 Data Provider contract address.
+     *
+     * @dev This immutable variable holds the address of the Aave V3 Data Provider, which is used to fetch
+     *      user reserve data, including debt and collateral information. It is initialized during the deployment
+     *      of the `AaveV3UsdsAdapter` contract.
+     */
     IAavePoolDataProvider public immutable DATA_PROVIDER;
 
     /// --------Errors-------- ///
 
-    /// @dev Reverts if the debt for a specific token has not been successfully cleared
-    error DebtNotCleared(address aToken);
+    /**
+     * @dev Reverts if the debt for a specific token has not been successfully cleared.
+     * @param aToken The address of the Aave aToken associated with the uncleared debt.
+     *
+     * @notice This error is triggered during a full migration when the user's debt for a specific asset
+     *         in Aave V3 has not been fully repaid after the repayment process.
+     */ error DebtNotCleared(address aToken);
 
     /// --------Constructor-------- ///
 
     /**
-     * @notice Initializes the AaveV3Adapter contract
-     * @param deploymentParams Struct containing the deployment parameters:
-     * - uniswapRouter Address of the Uniswap V3 SwapRouter contract
-     * - daiUsdsConverter Address of the DAI to USDS converter contract
-     * - dai Address of the DAI token
-     * - usds Address of the USDS token
-     * - wrappedNativeToken Address of the wrapped native token (e.g., WETH)
-     * - aaveLendingPool Address of the Aave V3 Lending Pool contract
-     * - aaveDataProvider Address of the Aave V3 Data Provider contract
-     * @dev Reverts if any of the provided addresses are zero
+     * @notice Initializes the AaveV3UsdsAdapter contract with deployment parameters.
+     *
+     * @param deploymentParams Struct containing the following deployment parameters:
+     *        - `uniswapRouter`: Address of the Uniswap V3 SwapRouter contract.
+     *        - `daiUsdsConverter`: Address of the DAI ⇄ USDS converter contract (optional, can be zero address).
+     *        - `dai`: Address of the DAI token (optional, can be zero address).
+     *        - `usds`: Address of the USDS token (optional, can be zero address).
+     *        - `aaveLendingPool`: Address of the Aave V3 Lending Pool contract.
+     *        - `aaveDataProvider`: Address of the Aave V3 Data Provider contract.
+     *        - `isFullMigration`: Boolean flag indicating whether the migration requires all debt to be cleared.
+     *        - `useSwapRouter02`: Boolean flag indicating whether to use Uniswap V3 SwapRouter02.
+     *
+     * @dev The constructor initializes the `SwapModule` and `ConvertModule` with the provided Uniswap router
+     *      and stablecoin converter addresses. It also validates that the Aave Lending Pool and Data Provider
+     *      addresses are non-zero. All parameters are stored as immutable for gas efficiency and safety.
+     *
+     * Requirements:
+     * - `aaveLendingPool` and `aaveDataProvider` must not be zero addresses.
+     *
+     * Warning:
+     * - If `daiUsdsConverter`, `dai`, or `usds` are set to zero addresses, USDS-specific logic (e.g., DAI ⇄ USDS conversions)
+     *   will not be supported. In this case, only standard token swaps will be available for migration.
+     *
+     * Reverts:
+     * - {InvalidZeroAddress} if `aaveLendingPool` or `aaveDataProvider` is a zero address.
      */
     constructor(
         DeploymentParams memory deploymentParams
     )
-        SwapModule(deploymentParams.uniswapRouter)
+        SwapModule(deploymentParams.uniswapRouter, deploymentParams.useSwapRouter02)
         ConvertModule(deploymentParams.daiUsdsConverter, deploymentParams.dai, deploymentParams.usds)
     {
-        if (
-            deploymentParams.aaveLendingPool == address(0) ||
-            deploymentParams.wrappedNativeToken == address(0) ||
-            deploymentParams.aaveDataProvider == address(0)
-        ) revert InvalidZeroAddress();
+        if (deploymentParams.aaveLendingPool == address(0) || deploymentParams.aaveDataProvider == address(0))
+            revert InvalidZeroAddress();
 
         LENDING_POOL = IAavePool(deploymentParams.aaveLendingPool);
         DATA_PROVIDER = IAavePoolDataProvider(deploymentParams.aaveDataProvider);
         IS_FULL_MIGRATION = deploymentParams.isFullMigration;
-        WRAPPED_NATIVE_TOKEN = IWETH9(deploymentParams.wrappedNativeToken);
     }
 
     /// --------Functions-------- ///
@@ -199,8 +251,8 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      *  2. Iterates through each borrow and calls `_repayBorrow` to repay the user's debt on Aave V3.
      *     This may involve swaps or stablecoin conversions.
      *  3. Iterates through each collateral item and calls `_migrateCollateral` to withdraw it from Aave V3
-     *     and supply it into the corresponding Compound III market. This may include wrapping native tokens,
-     *     swaps via Uniswap V3, or DAI ⇄ USDS conversions.
+     *     and supply it into the corresponding Compound III market. This may include swaps via Uniswap V3,
+     *     or DAI ⇄ USDS conversions.
      *  4. If flash loan data is provided, it settles the flash loan debt via `_repayFlashloan`, either from
      *     contract balance or by withdrawing from the user's Compound III account.
      *
@@ -211,15 +263,30 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      *        - An array of AaveV3Collateral items representing collaterals to migrate.
      * @param flashloanData ABI-encoded data used to repay a Uniswap V3 flash loan if one was taken.
      *        Should be empty if no flash loan is used (e.g., in debt-free collateral migration).
+     * @param preBaseAssetBalance The contract's base token balance before the migration process begins.
      *
-     * @dev This function is protected against reentrancy attacks.
+     * Requirements:
+     * - User must approve this contract to transfer relevant aTokens and debtTokens.
+     * - The user must grant permission to the Migrator contract to interact with their tokens in the target Compound III market:
+     *   `IComet.allow(migratorV2.address, true)`.
+     * - Underlying assets must be supported by Uniswap or have valid conversion paths via `ConvertModule`.
+     * - Swap parameters must be accurate and safe (e.g., `amountInMaximum` and `amountOutMinimum`).
+     * - If a flash loan is used, the `flashloanData` must be valid and sufficient to cover the loan repayment.
+     *
+     * Warning:
+     * - This contract does not support Fee-on-transfer tokens. Using such tokens may result in unexpected behavior or reverts.
+     *
+     * Reverts:
+     * - If any borrow repayment, collateral migration, or flash loan repayment fails.
+     * - If the migration process encounters invalid swap paths or insufficient allowances.
      */
     function executeMigration(
         address user,
         address comet,
         bytes calldata migrationData,
-        bytes calldata flashloanData
-    ) external nonReentrant {
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
+    ) external {
         // Decode the migration data into an AaveV3Position struct
         AaveV3Position memory position = abi.decode(migrationData, (AaveV3Position));
 
@@ -233,9 +300,9 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
             _migrateCollateral(user, comet, position.collaterals[i]);
         }
 
-        // Repay flashloan
+        // Repay the flash loan if it has been used
         if (flashloanData.length > 0) {
-            _repayFlashloan(user, comet, flashloanData);
+            _repayFlashloan(user, comet, flashloanData, preBaseAssetBalance);
         }
     }
 
@@ -243,66 +310,153 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      * @notice Repays a flash loan obtained from a Uniswap V3 liquidity pool.
      *
      * @dev This function ensures that the borrowed flash loan amount, including its associated fee,
-     * is fully repaid to the original liquidity pool. If the contract's current balance in the
-     * `flashBaseToken` is insufficient, it attempts to cover the shortfall by withdrawing tokens
-     * from the user's Comet account. If the flash loan token is DAI while the Comet market uses
-     * USDS as its base token, a conversion from USDS to DAI is performed before repayment.
+     *      is fully repaid to the original liquidity pool. If the contract's current balance in the
+     *      `flashBaseToken` is insufficient, it attempts to cover the shortfall by withdrawing tokens
+     *      from the user's Comet account. If the flash loan token is DAI while the Comet market uses
+     *      USDS as its base token, a conversion from USDS to DAI is performed before repayment.
      *
-     * This logic supports both direct USDS usage and the proxy mechanism via DAI for markets
-     * with USDS as the base asset.
+     * Steps performed:
+     * 1. Decodes the `flashloanData` to extract the flash loan pool, token, and repayment amount.
+     * 2. Checks the contract's current balance of the flash loan token and calculates any shortfall.
+     * 3. If a shortfall exists:
+     *    - Calculates the amount to withdraw from the user's Comet account.
+     *    - Withdraws the required amount from the user's Comet account.
+     *    - Converts USDS to DAI if necessary for repayment.
+     * 4. Transfers the full repayment amount (including fees) back to the flash loan pool.
+     * 5. Supplies any residual base token balance back to the user's Comet account.
      *
      * @param user The address of the user whose Comet balance may be used to cover the flash loan repayment.
      * @param comet The address of the Compound III (Comet) market where the user's collateral or base token is stored.
      * @param flashloanData ABI-encoded tuple containing:
      *        - `flashLiquidityPool` (address): The Uniswap V3 pool that issued the flash loan.
-     *        - `flashBaseToken` (address): The token borrowed through the flash loan.
+     *        - `flashBaseToken` (IERC20): The token borrowed through the flash loan.
      *        - `flashAmountWithFee` (uint256): The total repayment amount, including the flash loan fee.
+     * @param preBaseAssetBalance The contract's base token balance before the flash loan was taken.
      *
      * Requirements:
      * - The contract must repay the flash loan in `flashBaseToken`, even if it must convert assets to obtain it.
      * - If conversion is required (USDS → DAI), it must happen before the repayment.
      * - If withdrawal is needed, the user must have sufficient available balance in the Comet market.
      *
-     * Effects:
-     * - May trigger a withdrawal from the user's Comet balance via `withdrawFrom()`.
-     * - May invoke `_convertUsdsToDai()` to acquire the correct token for repayment.
-     * - Concludes with a `safeTransfer` of `flashAmountWithFee` to the liquidity pool.
+     * Reverts:
+     * - If the flash loan repayment fails due to insufficient funds or allowance issues.
      */
-    function _repayFlashloan(address user, address comet, bytes calldata flashloanData) internal {
-        (address flashLiquidityPool, address flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
+    function _repayFlashloan(
+        address user,
+        address comet,
+        bytes calldata flashloanData,
+        uint256 preBaseAssetBalance
+    ) internal {
+        (address flashLiquidityPool, IERC20 flashBaseToken, uint256 flashAmountWithFee) = abi.decode(
             flashloanData,
-            (address, address, uint256)
+            (address, IERC20, uint256)
         );
 
         address executor = address(this);
-        uint256 balance = IERC20(flashBaseToken).balanceOf(executor);
+        uint256 ownBaseTokenBalance = flashBaseToken.balanceOf(executor) - preBaseAssetBalance;
+        // Calculate the shortfall amount to be converted before repayment flashloan
+        uint256 shortfallAmount = flashAmountWithFee - ownBaseTokenBalance;
 
-        if (balance < flashAmountWithFee) {
-            address cometBaseToken = IComet(comet).baseToken();
+        IERC20 cometBaseToken = IComet(comet).baseToken();
+
+        if (ownBaseTokenBalance < flashAmountWithFee) {
+            // Calculate the amount to withdraw from the user's Comet account
+            uint256 withdrawAmount = _calculateWithdrawAmount(comet, user, ownBaseTokenBalance, flashAmountWithFee);
+
             // If the flash loan token is DAI and the Comet base token is USDS, convert USDS to DAI
             if (cometBaseToken == USDS && flashBaseToken == DAI) {
-                IComet(comet).withdrawFrom(user, executor, USDS, (flashAmountWithFee - balance));
-                _convertUsdsToDai(flashAmountWithFee - balance);
+                IComet(comet).withdrawFrom(user, executor, USDS, withdrawAmount);
+                _convertUsdsToDai(shortfallAmount);
             } else {
                 // Withdraw the required amount from the user's Comet account
-                IComet(comet).withdrawFrom(user, executor, cometBaseToken, (flashAmountWithFee - balance));
+                IComet(comet).withdrawFrom(user, executor, flashBaseToken, withdrawAmount);
             }
         }
         // Repay the flash loan
-        IERC20(flashBaseToken).safeTransfer(flashLiquidityPool, flashAmountWithFee);
+        flashBaseToken.safeTransfer(flashLiquidityPool, flashAmountWithFee);
+
+        // Check residual base asset balance
+        uint256 residualBaseAsset = cometBaseToken.balanceOf(executor) - preBaseAssetBalance;
+
+        // If there is a residual base asset balance, supply it back to the user's Comet account
+        if (residualBaseAsset > 0) {
+            cometBaseToken.safeIncreaseAllowance(comet, residualBaseAsset);
+            IComet(comet).supplyTo(user, cometBaseToken, residualBaseAsset);
+        }
+    }
+
+    /**
+     * @notice Calculates the amount of tokens to withdraw from the user's Compound III (Comet) account
+     *         to cover a flash loan repayment shortfall.
+     *
+     * @dev This function determines the optimal withdrawal amount based on the user's current Comet balances,
+     *      borrow limits, and the flash loan repayment requirements. It ensures that the user maintains the
+     *      minimum borrow balance (`baseBorrowMin`) required by Comet after the transaction.
+     *
+     * @param comet Address of the Compound III (Comet) contract.
+     * @param user Address of the user whose Comet account is being accessed.
+     * @param ownBaseTokenBalance Current balance of the base token held by the contract.
+     * @param repayFlashloanAmount Total amount required to repay the flash loan, including fees.
+     *
+     * @return withdrawAmount The amount of tokens to withdraw from the user's Comet account.
+     *
+     * Logic:
+     * - If the user's Comet base token balance is sufficient to cover the shortfall, withdraw only the shortfall amount.
+     * - If the user's projected borrow balance after the transaction meets or exceeds `baseBorrowMin`, withdraw the shortfall.
+     * - If the user's projected borrow balance is below `baseBorrowMin`, calculate the additional amount needed to meet the minimum.
+     * - If the user has no debt and the required amount is less than `baseBorrowMin`, withdraw the minimum borrow amount.
+     *
+     * Requirements:
+     * - The user must have sufficient base token balance or borrowing capacity in their Comet account.
+     *
+     * Reverts:
+     * - This function does not revert directly but relies on the caller to handle insufficient balances or borrowing capacity.
+     */
+    function _calculateWithdrawAmount(
+        address comet,
+        address user,
+        uint256 ownBaseTokenBalance,
+        uint256 repayFlashloanAmount
+    ) internal view returns (uint256 withdrawAmount) {
+        uint256 userCometBaseTokenBalance = IComet(comet).balanceOf(user);
+        uint256 userCometBorrowBalance = IComet(comet).borrowBalanceOf(user);
+        uint256 baseBorrowMin = IComet(comet).baseBorrowMin();
+        uint256 borrowMinDelta = (userCometBorrowBalance < baseBorrowMin && userCometBorrowBalance != 0)
+            ? (baseBorrowMin - userCometBorrowBalance)
+            : baseBorrowMin;
+
+        uint256 shortfallAmount = repayFlashloanAmount - ownBaseTokenBalance;
+
+        // Case: the user already has a debt that covers the shortfall, or borrow >= borrowMinDelta
+        uint256 projectedBorrow = shortfallAmount > userCometBaseTokenBalance
+            ? shortfallAmount - userCometBaseTokenBalance
+            : 0;
+
+        if (userCometBaseTokenBalance >= shortfallAmount || projectedBorrow >= borrowMinDelta) {
+            withdrawAmount = shortfallAmount;
+        }
+        // If projectedBorrow < borrowMinDelta, but the user already has a debt < borrowMinDelta,
+        // then you need to borrow enough to have ≥ borrowMinDelta after the transaction
+        else if (userCometBaseTokenBalance > 0 && projectedBorrow < borrowMinDelta) {
+            withdrawAmount = shortfallAmount + (borrowMinDelta - projectedBorrow);
+        }
+        // If the user has no debt and needs less than borrowMinDelta, we take the minimum
+        else {
+            withdrawAmount = borrowMinDelta;
+        }
     }
 
     /**
      * @notice Repays a user's borrow position on Aave V3 as part of the migration process.
      *
      * @dev This function determines the repayment amount (either specified or full),
-     * optionally swaps tokens using Uniswap V3 or performs a DAI → USDS conversion,
+     * optionally swaps tokens using Uniswap V3 or performs a DAI ⇄ USDS conversion,
      * then repays the user's debt position in Aave V3 using the lending pool.
      *
      * The borrow repayment is routed through the adapter, which may act on behalf of the user
      * using flash-loaned tokens or previously converted/supplied tokens.
      *
-     * If the `isFullMigration` flag is true, the function checks whether the entire debt
+     * If the `IS_FULL_MIGRATION` flag is true, the function checks whether the entire debt
      * position has been successfully cleared post-repayment and reverts otherwise.
      *
      * @param user The address of the user whose debt is being repaid.
@@ -314,6 +468,7 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      * Swap Logic:
      * - If `swapParams.path.length > 0`, a swap is required.
      * - If the path implies DAI → USDS, `_convertDaiToUsds()` is invoked directly.
+     * - If the path implies USDS → DAI, `_convertUsdsToDai()` is invoked directly.
      * - Otherwise, a Uniswap V3 swap is performed using `ExactOutputParams`.
      *
      * Repayment:
@@ -330,6 +485,7 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      *
      * Reverts:
      * - If the full debt is not cleared during full migration.
+     * - If token transfers, swaps, or approvals fail.
      */
     function _repayBorrow(address user, AaveV3Borrow memory borrow) internal {
         // Determine the amount to repay. If max value, repay the full debt balance
@@ -339,11 +495,21 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
 
         // If a swap is required to obtain the repayment tokens
         if (borrow.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(borrow.swapParams.path);
-            address tokenOut = _decodeTokenOut(borrow.swapParams.path);
-            // If the swap is from DAI to USDS, convert DAI to USDS
-            if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
-                // Convert DAI to USDS and repay the borrow
+            IERC20 tokenIn = _decodeTokenIn(borrow.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(borrow.swapParams.path);
+            if (
+                tokenIn == ConvertModule.USDS &&
+                tokenOut == ConvertModule.DAI &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
+                // Convert USDS to DAI for repayment
+                _convertUsdsToDai(repayAmount);
+            } else if (
+                tokenIn == ConvertModule.DAI &&
+                tokenOut == ConvertModule.USDS &&
+                borrow.swapParams.path.length == CONVERT_PATH_LENGTH
+            ) {
+                // Convert DAI to USDS for repayment
                 _convertDaiToUsds(repayAmount);
             } else {
                 // Perform a swap to obtain the borrow token using the provided swap parameters
@@ -353,17 +519,17 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
                         recipient: address(this),
                         amountOut: repayAmount,
                         amountInMaximum: borrow.swapParams.amountInMaximum,
-                        deadline: block.timestamp
+                        deadline: borrow.swapParams.deadline
                     })
                 );
             }
         }
 
         // Get the underlying asset address of the debt token
-        address underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
+        IERC20 underlyingAsset = IDebtToken(borrow.debtToken).UNDERLYING_ASSET_ADDRESS();
 
         // Approve the Aave Lending Pool to spend the repayment amount
-        IERC20(underlyingAsset).safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
+        underlyingAsset.safeIncreaseAllowance(address(LENDING_POOL), repayAmount);
 
         // Repay the borrow on behalf of the user
         LENDING_POOL.repay(underlyingAsset, repayAmount, INTEREST_RATE_MODE, user);
@@ -387,13 +553,11 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      *    - No swap: directly supplies the asset to Compound III.
      *    - DAI → USDS conversion via `_convertDaiToUsds()`, if required by the Comet market.
      *    - Swap via Uniswap V3 using `ExactInputParams`, followed by optional USDS conversion.
-     *    - If the collateral is the native token, it wraps it to WETH and supplies it.
      *
      * Special handling:
      * - If the target Compound III market uses USDS and the user has DAI collateral,
      *   the contract automatically converts DAI to USDS.
      * - If `swapParams.path.length > 0`, it performs an on-chain token swap before depositing.
-     * - If the token is ETH (represented as NATIVE_TOKEN), it wraps it to WETH.
      *
      * @param user The address of the user whose collateral is being migrated.
      * @param comet The address of the Compound III (Comet) market where the collateral will be deposited.
@@ -420,20 +584,20 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
         // Transfer the collateral tokens from the user to this contract
         IAToken(collateral.aToken).transferFrom(user, address(this), aTokenAmount);
         // Get the underlying asset address of the collateral token
-        address underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
+        IERC20 underlyingAsset = IAToken(collateral.aToken).UNDERLYING_ASSET_ADDRESS();
         // Get the base token of the Comet contract
-        address baseToken = IComet(comet).baseToken();
+        IERC20 baseToken = IComet(comet).baseToken();
         // Withdraw the collateral from Aave V3
         LENDING_POOL.withdraw(underlyingAsset, aTokenAmount, address(this));
 
         // If a swap is required to obtain the migration tokens
         if (collateral.swapParams.path.length > 0) {
-            address tokenIn = _decodeTokenIn(collateral.swapParams.path);
-            address tokenOut = _decodeTokenOut(collateral.swapParams.path);
+            IERC20 tokenIn = _decodeTokenIn(collateral.swapParams.path);
+            IERC20 tokenOut = _decodeTokenOut(collateral.swapParams.path);
             // If the swap is from DAI to USDS, convert DAI to USDS
             if (tokenIn == ConvertModule.DAI && tokenOut == ConvertModule.USDS) {
                 _convertDaiToUsds(aTokenAmount);
-                IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, aTokenAmount);
+                ConvertModule.USDS.safeIncreaseAllowance(comet, aTokenAmount);
                 IComet(comet).supplyTo(user, ConvertModule.USDS, aTokenAmount);
             } else {
                 uint256 amountOut = _swapCollateralToCompoundToken(
@@ -442,33 +606,26 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
                         recipient: address(this),
                         amountIn: aTokenAmount,
                         amountOutMinimum: collateral.swapParams.amountOutMinimum,
-                        deadline: block.timestamp
+                        deadline: collateral.swapParams.deadline
                     })
                 );
 
                 if (tokenOut == ConvertModule.DAI && baseToken == ConvertModule.USDS) {
                     _convertDaiToUsds(amountOut);
-                    IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, amountOut);
+                    ConvertModule.USDS.safeIncreaseAllowance(comet, amountOut);
                     IComet(comet).supplyTo(user, ConvertModule.USDS, amountOut);
                 } else {
-                    IERC20(tokenOut).safeIncreaseAllowance(comet, amountOut);
+                    tokenOut.safeIncreaseAllowance(comet, amountOut);
                     IComet(comet).supplyTo(user, tokenOut, amountOut);
                 }
             }
-            // If the collateral token is the native token, wrap the native token and supply it to Comet
-        } else if (underlyingAsset == NATIVE_TOKEN) {
-            // Wrap the native token
-            WRAPPED_NATIVE_TOKEN.deposit{value: aTokenAmount}();
-            // Approve the wrapped native token to be spent by Comet
-            WRAPPED_NATIVE_TOKEN.approve(comet, aTokenAmount);
-            IComet(comet).supplyTo(user, address(WRAPPED_NATIVE_TOKEN), aTokenAmount);
             // If no swap is required, supply the collateral directly to Comet
         } else if (underlyingAsset == ConvertModule.DAI && baseToken == ConvertModule.USDS) {
             _convertDaiToUsds(aTokenAmount);
-            IERC20(ConvertModule.USDS).safeIncreaseAllowance(comet, aTokenAmount);
+            ConvertModule.USDS.safeIncreaseAllowance(comet, aTokenAmount);
             IComet(comet).supplyTo(user, ConvertModule.USDS, aTokenAmount);
         } else {
-            IERC20(underlyingAsset).safeIncreaseAllowance(comet, aTokenAmount);
+            underlyingAsset.safeIncreaseAllowance(comet, aTokenAmount);
             IComet(comet).supplyTo(user, underlyingAsset, aTokenAmount);
         }
     }
@@ -477,22 +634,18 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule, Deleg
      * @notice Checks whether the user's debt position for a specific asset in Aave V3 is fully repaid.
      *
      * @dev Queries the Aave V3 Data Provider to retrieve the user's reserve data for the given asset.
-     *      The method extracts the current stable and variable debt values and returns true
-     *      only if both are equal to zero.
+     *      The method extracts the current variable debt value and returns true only if it is zero.
      *
      * @param user The address of the user whose debt status is being checked.
      * @param asset The address of the underlying asset in Aave V3 (e.g., DAI, USDC, etc.).
      *
-     * @return isCleared A boolean value indicating whether the total debt (stable + variable)
-     *         for the given asset is zero. Returns `true` if fully repaid, `false` otherwise.
+     * @return isCleared A boolean value indicating whether the variable debt for the given asset is zero.
+     *         Returns `true` if fully repaid, `false` otherwise.
      */
-    function _isDebtCleared(address user, address asset) internal view returns (bool isCleared) {
+    function _isDebtCleared(address user, IERC20 asset) internal view returns (bool isCleared) {
         // Get the user's current debt balance for the specified asset
-        (, uint256 currentStableDebt, uint256 currentVariableDebt, , , , , , ) = DATA_PROVIDER.getUserReserveData(
-            asset,
-            user
-        );
-        // Debt is cleared if the total debt balance is zero
-        return (currentStableDebt + currentVariableDebt) == 0;
+        (, , uint256 currentVariableDebt, , , , , , ) = DATA_PROVIDER.getUserReserveData(asset, user);
+        // Debt is cleared if the debt balance is zero
+        isCleared = (currentVariableDebt == 0);
     }
 }

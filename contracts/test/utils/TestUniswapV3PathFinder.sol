@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {UniswapV3PathFinder} from "../../../contracts/utils/UniswapV3PathFinder.sol";
+import {UniswapV3PathFinder} from "../../../contracts/mocks/utils/UniswapV3PathFinder.sol";
 
 contract TestUniswapV3PathFinder is UniswapV3PathFinder {
     bool public immutable IS_TEST_DEPLOYMENT;

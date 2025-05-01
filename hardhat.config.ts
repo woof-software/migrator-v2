@@ -38,10 +38,6 @@ import "hardhat-abi-exporter";
 import "@openzeppelin/hardhat-upgrades";
 import "hardhat-dependency-compiler"; // See the comment for the field `dependencyCompiler` in `config`.
 import "solidity-docgen"; // The tool by OpenZeppelin to generate documentation for contracts in the Markdown format.
-import * as tenderly from "@tenderly/hardhat-tenderly";
-
-// tenderly.setup({automaticVerifications: !!process.env.TENDERLY_AUTOMATIC_VERIFICATION});
-// tenderly.setup({ automaticVerifications: true });
 
 // See `README.md` for details.
 
@@ -104,7 +100,12 @@ const config: HardhatUserConfig = {
                         enabled: ENABLED_OPTIMIZER,
                         runs: OPTIMIZER_RUNS
                     },
-                    evmVersion: "cancun"
+                    evmVersion: "cancun",
+                    outputSelection: {
+                        "*": {
+                            "*": ["storageLayout", "abi", "evm.bytecode", "evm.deployedBytecode"]
+                        }
+                    }
                 }
             },
             {
@@ -114,19 +115,18 @@ const config: HardhatUserConfig = {
                     optimizer: {
                         enabled: ENABLED_OPTIMIZER,
                         runs: OPTIMIZER_RUNS
+                    },
+                    outputSelection: {
+                        "*": {
+                            "*": ["storageLayout", "abi", "evm.bytecode", "evm.deployedBytecode"]
+                        }
                     }
                 }
             }
         ]
     },
     defaultNetwork: "hardhat",
-    // defaultNetwork: "virtualMainnet",
     networks: {
-        virtualMainnet: {
-            url: process.env.TENDERLY_VIRTUAL_MAINNET_RPC!,
-            gas: 30000000,
-            gasPrice: 8000000000
-        },
         hardhat: {
             chains: {
                 137: {
@@ -164,7 +164,6 @@ const config: HardhatUserConfig = {
             chainId: 1,
             url: MAINNET_URL,
             accounts: [...MAINNET_KEYS],
-            // gasPrice: 734000000
             gasPrice: 1788000000
         },
         polygon: {
@@ -193,12 +192,6 @@ const config: HardhatUserConfig = {
             url: "http://127.0.0.1:8545/"
             // accounts: [""]
         }
-    },
-    tenderly: {
-        // https://docs.tenderly.co/account/projects/account-project-slug
-        project: "project",
-        username: "sundunchan",
-        privateVerification: process.env.TENDERLY_PUBLIC_VERIFICATION !== "true"
     },
     contractSizer: {
         except: ["mocks/", "from-dependencies/"]
