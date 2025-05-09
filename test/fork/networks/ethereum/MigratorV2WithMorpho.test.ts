@@ -98,7 +98,7 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
             WETH: "0x8EB8a3b98659Cce290402893d0123abb75E3ab28",
             wstETH: "0xC035a7cf15375cE2706766804551791aD035E0C2",
             LINK: "0xF977814e90dA44bFA03b6295A0616a897441aceC",
-            cbBTC: "0x698C1f4c8db11629fDC913F54A6dC44a9166F187",
+            cbBTC: "0xb3973D459df38ae57797811F2A1fd061DA1BC123",
             sDAI: "0x15a8B2ceA2D8f48c150f2EC7be07808c54355Bc7",
             USDe: "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
         };
@@ -381,7 +381,11 @@ describe("MigratorV2 and MorphoAdapter contracts", function () {
                         swapParams: {
                             path: ethers.utils.concat([
                                 ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
-                                FEE_100,
+                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             deadline,

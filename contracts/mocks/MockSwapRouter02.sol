@@ -25,6 +25,12 @@ contract MockSwapRouter02 is ISwapRouter02, NegativeTesting {
 
     address public adapter;
 
+    uint256 public dustAmount = 100;
+
+    function setDustAmount(uint256 _dustAmount) external {
+        dustAmount = _dustAmount;
+    }
+
     function setAdapter(address _adapter) external {
         adapter = _adapter;
     }
@@ -137,6 +143,15 @@ contract MockSwapRouter02 is ISwapRouter02, NegativeTesting {
 
         (address tokenOut, address tokenIn) = _decodePath(params.path);
 
+        IERC20[] memory connectorTokens = _decodeConnectorTokens(params.path);
+
+        if (negativeTest == NegativeTest.Dust) {
+            // Transfer dust to the recipient
+            for (uint256 i = 0; i < connectorTokens.length; ++i) {
+                IERC20(connectorTokens[i]).transfer(params.recipient, dustAmount);
+            }
+        }
+
         // amountIn = amountOut (1:1)
         amountIn = params.amountOut;
         // Transfer tokenIn from caller
@@ -180,6 +195,32 @@ contract MockSwapRouter02 is ISwapRouter02, NegativeTesting {
             let pathLength := mload(path)
             // Extract the last 20 bytes as tokenOut address
             tokenOut := mload(add(path, pathLength))
+        }
+    }
+
+    function _decodeConnectorTokens(bytes memory path) internal pure returns (IERC20[] memory connectors) {
+        uint256 pathLength = path.length;
+
+        // Each hop = 20 (tokenIn) + 3 (fee) + 20 (tokenOut) = 43 bytes
+        if (pathLength <= 43) {
+            return new IERC20[](0); // Single path — no connectors
+        }
+
+        uint256 numConnectors = (pathLength - 43) / 23; // Calculate number of connectors
+        connectors = new IERC20[](numConnectors);
+
+        uint256 offset = 20; // skip tokenIn
+
+        for (uint256 i = 0; i < numConnectors; ++i) {
+            offset += 3; // skip fee
+            address connector;
+            assembly {
+                // Read 32 bytes from path starting at offset and shift right by 96 bits to get the address (20 bytes)
+                // 32 bytes = 256 bits, so we need to shift right by 256 - 160 = 96 bits
+                connector := shr(96, mload(add(add(path, 32), offset)))
+            }
+            connectors[i] = IERC20(connector);
+            offset += 20; // Move to next connector
         }
     }
 

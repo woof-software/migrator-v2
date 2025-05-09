@@ -73,15 +73,6 @@ abstract contract SwapModule is CommonErrors {
     /// --------Errors-------- ///
 
     /**
-     * @dev Reverts if an invalid slippage basis points (BPS) value is provided.
-     * @param slippageBps The provided slippage BPS value.
-     *
-     * @notice This error is triggered when the slippage BPS value exceeds the acceptable range
-     *         or is otherwise deemed invalid for the swap operation.
-     */
-    error InvalidSlippageBps(uint256 slippageBps);
-
-    /**
      * @dev Reverts if the input token amount is zero.
      *
      * @notice This error is triggered when a swap operation is attempted with an input amount of zero,
@@ -163,6 +154,7 @@ abstract contract SwapModule is CommonErrors {
      *        - `amountOut`: The exact amount of output tokens to be received.
      *        - `amountInMaximum`: The maximum amount of input tokens that can be spent.
      *        - `deadline`: The timestamp by which the swap must be completed.
+     * @param dustCollector The address to which any dust tokens will be sent after the swap.
      *
      * @return amountIn The amount of input tokens spent during the swap.
      *
@@ -186,12 +178,21 @@ abstract contract SwapModule is CommonErrors {
      * - {InvalidSwapDeadline} if `params.deadline` is zero or has already passed.
      */
     function _swapFlashloanToBorrowToken(
-        ISwapRouter.ExactOutputParams memory params
+        ISwapRouter.ExactOutputParams memory params,
+        address dustCollector
     ) internal returns (uint256 amountIn) {
         if (params.amountOut == 0) revert ZeroAmountOut();
         if (params.path.length == 0) revert EmptySwapPath();
         if (params.amountInMaximum == 0) revert ZeroAmountInMaximum();
         if (params.deadline == 0 || params.deadline < block.timestamp) revert InvalidSwapDeadline();
+
+        // Decode the connector tokens from the swap path
+        IERC20[] memory connectorTokens = _decodeConnectorTokens(params.path);
+        uint256[] memory balancesBefore = new uint256[](connectorTokens.length);
+        // Store the initial balances of the connector tokens
+        for (uint256 i = 0; i < connectorTokens.length; i++) {
+            balancesBefore[i] = connectorTokens[i].balanceOf(address(this));
+        }
 
         IERC20 tokenOut = _decodeTokenOut(params.path);
         _approveTokenForSwap(tokenOut);
@@ -207,6 +208,17 @@ abstract contract SwapModule is CommonErrors {
             });
 
             amountIn = ISwapRouter02(address(UNISWAP_ROUTER)).exactOutput(params02);
+        }
+
+        // Withdraw any dust tokens from the swap
+        for (uint256 i = 0; i < connectorTokens.length; i++) {
+            uint256 newBalance = connectorTokens[i].balanceOf(address(this));
+            if (newBalance > balancesBefore[i]) {
+                uint256 dust = newBalance - balancesBefore[i];
+                if (dust > 0) {
+                    connectorTokens[i].transfer(dustCollector, dust);
+                }
+            }
         }
 
         _clearApprove(tokenOut);
@@ -271,6 +283,40 @@ abstract contract SwapModule is CommonErrors {
     }
 
     /// --------Internal Helper Functions-------- ///
+
+    /**
+     * @notice Decodes connector (intermediate) token addresses from a multi-hop swap path.
+     * @param path The encoded swap path specifying the token swap sequence.
+     * @return connectors Array of connector token addresses.
+     *
+     * @dev Returns an empty array if the path encodes only a single swap (i.e., no intermediate tokens).
+     *      Uses inline assembly for efficient decoding.
+     */
+    function _decodeConnectorTokens(bytes memory path) internal pure returns (IERC20[] memory connectors) {
+        uint256 pathLength = path.length;
+
+        // Each hop = 20 (tokenIn) + 3 (fee) + 20 (tokenOut) = 43 bytes
+        if (pathLength <= 43) {
+            return new IERC20[](0); // Single path — no connectors
+        }
+
+        uint256 numConnectors = (pathLength - 43) / 23; // Calculate number of connectors
+        connectors = new IERC20[](numConnectors);
+
+        uint256 offset = 20; // skip tokenIn
+
+        for (uint256 i = 0; i < numConnectors; ++i) {
+            offset += 3; // skip fee
+            address connector;
+            assembly {
+                // Read 32 bytes from path starting at offset and shift right by 96 bits to get the address (20 bytes)
+                // 32 bytes = 256 bits, so we need to shift right by 256 - 160 = 96 bits
+                connector := shr(96, mload(add(add(path, 32), offset)))
+            }
+            connectors[i] = IERC20(connector);
+            offset += 20; // Move to next connector
+        }
+    }
 
     /**
      * @notice Approves the Uniswap router to spend an infinite amount of a specified token.
