@@ -193,7 +193,16 @@ _Ensures compatibility between the flash loan token and the Comet market._
 error AddressPairMismatch(address dai, address usds)
 ```
 
-_Thrown when DAI and USDS addresses are inconsistent or identical when non-zero._
+Reverts when the DAI and USDS addresses are inconsistent or identical when non-zero.
+
+_This error is thrown if only one of the addresses is zero, or if both are non-zero and identical._
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| dai | address | The address of the DAI token provided. |
+| usds | address | The address of the USDS token provided. |
 
 ### MigrationExecuted
 

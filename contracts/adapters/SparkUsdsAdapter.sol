@@ -202,7 +202,8 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *
      * @notice This error is triggered during a full migration when the user's debt for a specific asset
      *         in Spark has not been fully repaid after the repayment process.
-     */ error DebtNotCleared(address spToken);
+     */
+    error DebtNotCleared(address spToken);
 
     /// --------Constructor-------- ///
 
@@ -527,7 +528,8 @@ contract SparkUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         amountOut: repayAmount,
                         amountInMaximum: borrow.swapParams.amountInMaximum,
                         deadline: borrow.swapParams.deadline
-                    })
+                    }),
+                    user
                 );
             }
         }

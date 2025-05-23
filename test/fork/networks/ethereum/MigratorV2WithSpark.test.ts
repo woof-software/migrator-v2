@@ -96,7 +96,7 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
             WETH: "0x8EB8a3b98659Cce290402893d0123abb75E3ab28",
             GNO: "0x70e278941eD3C0D2c6D6105df184831992ACA856",
             wstETH: "0xacB7027f271B03B502D65fEBa617a0d817D62b8e",
-            cbBTC: "0x698C1f4c8db11629fDC913F54A6dC44a9166F187",
+            cbBTC: "0xb3973D459df38ae57797811F2A1fd061DA1BC123",
             sDAI: "0x15a8B2ceA2D8f48c150f2EC7be07808c54355Bc7",
             LINK: "0xF977814e90dA44bFA03b6295A0616a897441aceC"
         };
@@ -400,7 +400,11 @@ describe("MigratorV2 and SparkAdapter contracts", function () {
                         swapParams: {
                             path: ethers.utils.concat([
                                 ethers.utils.hexZeroPad(tokenAddresses.DAI, 20),
-                                FEE_100,
+                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.WETH, 20),
+                                FEE_3000,
+                                ethers.utils.hexZeroPad(tokenAddresses.WBTC, 20),
+                                FEE_3000,
                                 ethers.utils.hexZeroPad(tokenAddresses.USDC, 20)
                             ]),
                             deadline,

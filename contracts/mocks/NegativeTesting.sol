@@ -9,7 +9,8 @@ abstract contract NegativeTesting {
         FakeUniswapV3Pool,
         SwapRouterNotSupported,
         DebtNotCleared,
-        InvalidPoll
+        InvalidPoll,
+        Dust
     }
 
     NegativeTest public negativeTest = NegativeTest.None;

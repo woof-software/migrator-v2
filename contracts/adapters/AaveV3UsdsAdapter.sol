@@ -167,7 +167,8 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *      to be fully cleared. If set to `true`, the contract ensures that all outstanding debt
      *      is repaid during the migration process. It is initialized during the deployment of the
      *      `AaveV3UsdsAdapter` contract.
-     */ bool public immutable IS_FULL_MIGRATION;
+     */
+    bool public immutable IS_FULL_MIGRATION;
 
     /**
      * @notice Aave V3 Lending Pool contract address.
@@ -195,7 +196,8 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      *
      * @notice This error is triggered during a full migration when the user's debt for a specific asset
      *         in Aave V3 has not been fully repaid after the repayment process.
-     */ error DebtNotCleared(address aToken);
+     */
+    error DebtNotCleared(address aToken);
 
     /// --------Constructor-------- ///
 
@@ -520,7 +522,8 @@ contract AaveV3UsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         amountOut: repayAmount,
                         amountInMaximum: borrow.swapParams.amountInMaximum,
                         deadline: borrow.swapParams.deadline
-                    })
+                    }),
+                    user
                 );
             }
         }

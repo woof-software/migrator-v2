@@ -169,7 +169,8 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
      * @dev This immutable variable holds the address of the Morpho Lending Pool, which is used to perform
      *      operations such as withdrawing collateral, repaying debt, and fetching user positions. It is
      *      initialized during the deployment of the `MorphoUsdsAdapter` contract.
-     */ IMorpho public immutable LENDING_POOL;
+     */
+    IMorpho public immutable LENDING_POOL;
 
     /// --------Errors-------- ///
 
@@ -505,7 +506,8 @@ contract MorphoUsdsAdapter is IProtocolAdapter, SwapModule, ConvertModule {
                         amountOut: borrow.assetsAmount,
                         amountInMaximum: borrow.swapParams.amountInMaximum,
                         deadline: borrow.swapParams.deadline
-                    })
+                    }),
+                    user
                 );
             }
         }

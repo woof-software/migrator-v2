@@ -70,23 +70,6 @@ Boolean indicating whether to use the Uniswap V3 SwapRouter02 interface.
 _This variable determines whether the `SwapModule` uses the SwapRouter02 interface for token swaps.
      It is immutable and set during the deployment of the `SwapModule` for gas efficiency and safety._
 
-### InvalidSlippageBps
-
-```solidity
-error InvalidSlippageBps(uint256 slippageBps)
-```
-
-This error is triggered when the slippage BPS value exceeds the acceptable range
-        or is otherwise deemed invalid for the swap operation.
-
-_Reverts if an invalid slippage basis points (BPS) value is provided._
-
-#### Parameters
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| slippageBps | uint256 | The provided slippage BPS value. |
-
 ### ZeroAmountIn
 
 ```solidity
@@ -180,7 +163,7 @@ Reverts:
 ### _swapFlashloanToBorrowToken
 
 ```solidity
-function _swapFlashloanToBorrowToken(struct ISwapRouter.ExactOutputParams params) internal returns (uint256 amountIn)
+function _swapFlashloanToBorrowToken(struct ISwapRouter.ExactOutputParams params, address dustCollector) internal returns (uint256 amountIn)
 ```
 
 Swaps tokens obtained from a flash loan into the borrow token required for repayment.
@@ -209,6 +192,7 @@ Reverts:
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | params | struct ISwapRouter.ExactOutputParams | Struct containing the following swap parameters for exact output:        - `path`: The encoded swap path specifying the token swap sequence.        - `recipient`: The address that will receive the output tokens.        - `amountOut`: The exact amount of output tokens to be received.        - `amountInMaximum`: The maximum amount of input tokens that can be spent.        - `deadline`: The timestamp by which the swap must be completed. |
+| dustCollector | address | The address to which any dust tokens will be sent after the swap. |
 
 #### Return Values
 
@@ -254,6 +238,29 @@ Reverts:
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | amountOut | uint256 | The amount of output tokens received during the swap. |
+
+### _decodeConnectorTokens
+
+```solidity
+function _decodeConnectorTokens(bytes path) internal pure returns (contract IERC20[] connectors)
+```
+
+Decodes connector (intermediate) token addresses from a multi-hop swap path.
+
+_Returns an empty array if the path encodes only a single swap (i.e., no intermediate tokens).
+     Uses inline assembly for efficient decoding._
+
+#### Parameters
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| path | bytes | The encoded swap path specifying the token swap sequence. |
+
+#### Return Values
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| connectors | contract IERC20[] | Array of connector token addresses. |
 
 ### _approveTokenForSwap
 

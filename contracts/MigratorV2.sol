@@ -76,7 +76,8 @@ contract MigratorV2 is CommonErrors, IUniswapV3FlashCallback, ReentrancyGuard, P
     /**
      * @notice Hash of the callback data used to validate the integrity of Uniswap V3 flash loan callbacks.
      * @dev This hash is computed during `migrate()` and validated in `uniswapV3FlashCallback()`.
-     */ bytes32 private _storedCallbackHash;
+     */
+    bytes32 private _storedCallbackHash;
 
     /**
      * @notice Set of registered protocol adapters.
@@ -85,6 +86,10 @@ contract MigratorV2 is CommonErrors, IUniswapV3FlashCallback, ReentrancyGuard, P
      */
     EnumerableSet.AddressSet private _adapters;
 
+    /**
+     * @notice Pre-migration balance of the base asset in the contract.
+     * @dev This variable is used to track the balance of the base asset before executing a migration.
+     */
     uint256 private _preBaseAssetBalance;
 
     /**
@@ -164,8 +169,13 @@ contract MigratorV2 is CommonErrors, IUniswapV3FlashCallback, ReentrancyGuard, P
      * @dev Ensures compatibility between the flash loan token and the Comet market.
      */
     error BaseTokenMismatch(address expected, address actual);
-
-    /// @dev Thrown when DAI and USDS addresses are inconsistent or identical when non-zero.
+    
+    /**
+     * @notice Reverts when the DAI and USDS addresses are inconsistent or identical when non-zero.
+     * @param dai The address of the DAI token provided.
+     * @param usds The address of the USDS token provided.
+     * @dev This error is thrown if only one of the addresses is zero, or if both are non-zero and identical.
+     */
     error AddressPairMismatch(address dai, address usds);
 
     /// --------Events-------- ///
